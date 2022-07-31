@@ -1,57 +1,43 @@
 # Matlab-Instrument-Drivers
 
 Matlab-Instrument-Drivers are codes that allows various experimental devices to be used from your Matlab program. This program requires the Instrument Control Toolbox.
-現時点でこのドライバ集はキーサイトのオシロスコープDSOS054A，などに対応しています．
+At present, this driver collection is compatible with 
+- Keysight's DSOS054A oscilloscope
+but more instruments will be added as the number of devices in our laboratory increases.
 
 # DEMO
 
 
 # Features
 
-"hoge"のセールスポイントや差別化などを説明する
 
 # Requirement
  
-"hoge"を動かすのに必要なライブラリなどを列挙する
- 
-* huga 3.5.2
-* hogehuga 1.0.2
- 
+Mathworks Matlab
+Mathworks Matlab Instrument Control Toolbox
+
 # Installation
- 
-Requirementで列挙したライブラリなどのインストール方法を説明する
- 
-```bash
-pip install huga_package
-```
+
+Just copy the "instrument-drivers" folder to the folder that your script/function exists.
  
 # Usage
- 
-DEMOの実行方法など、"hoge"の基本的な使い方を説明する
- 
-```bash
-git clone https://github.com/hoge/~
-cd examples
-python demo.py
-```
+
+1. Connect the compatible instrument(s) to your computer.
+2. Run demo.m to see demonstration of the instrument-drivers. 
  
 # Note
  
-注意点などがあれば書く
+
  
 # Author
  
 作成情報を列挙する
  
-* 作成者
-* 所属
-* E-mail
+* Naoki Matsuda
+* University of Fukui
+* nmatsuda@u-fukui.ac.jp
  
 # License
-ライセンスを明示する
  
-"hoge" is under [MIT license](https://en.wikipedia.org/wiki/MIT_License).
+"Matlab-Instrument-Drivers" is under [MIT license](https://en.wikipedia.org/wiki/MIT_License).
  
-社内向けなら社外秘であることを明示してる
- 
-"hoge" is Confidential.
