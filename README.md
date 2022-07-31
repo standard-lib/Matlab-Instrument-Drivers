@@ -31,8 +31,6 @@ Just copy the "instrument-drivers" folder to the folder that your script/functio
  
 # Author
  
-ì¬î•ñ‚ğ—ñ‹“‚·‚é
- 
 * Naoki Matsuda
 * University of Fukui
 * nmatsuda@u-fukui.ac.jp
