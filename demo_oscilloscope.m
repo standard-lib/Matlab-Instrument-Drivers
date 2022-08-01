@@ -1,5 +1,9 @@
 clear all
+
+% Get instrument list connected to this computer
 devlist = visadevlist
+
+% Select the device to connect
 if(size(devlist,1) == 0 )
     fprintf('Device not found!');
     quit
@@ -16,9 +20,13 @@ end
 dev = devlist(idxdev,:);
 fprintf('%s was selected\n', dev.Model);
 
+% Get handler of the oscilloscope
 osc = MID_Infiniium(dev.ResourceName);
+
+% Make the oscilloscope aquire the signal. Fetch data from the oscilloscope
+% to this computer.
 [timevec, waveforms, info] = osc.getWaveform();
 
 % Display waveforms and channel infomation
 plot(timevec, waveforms)
-info(1) 
+info(1) % channel 1 infomations
