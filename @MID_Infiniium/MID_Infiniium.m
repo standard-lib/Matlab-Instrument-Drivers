@@ -5,43 +5,45 @@
 classdef MID_Infiniium < handle
     
 	properties (SetAccess = public)
+        DriverVer = 1.0;
 		vObj;   % visaオブジェクト
-    end
-	
-    properties (SetAccess = private)
-       numChannel = 4;  % すべてのチャンネル数
-       visaAddressList = [...
-           'USB0::0x2a8d::0x904a::MY54410121::0::INSTR';
-           'USB0::0x2A8D::0x904A::MY55380117::0::INSTR'];
+        deviceModel;
+        OscSoftwareVerStr;
+        OscSoftwareVerNum;
+        bufferSize;
+        numChannel = 4;  % すべてのチャンネル数
     end
     
 	methods
 %%  コンストラクタ、デストラクタ
         % オシロスコープDSOS054Aのコンストラクタ
 		% 引数で入力バッファ数を指定する。指定しない場合、1MB程度になる。
-        function obj = MID_Infiniium(varargin)
-			if ( isempty(varargin) )
-				bufferSize = 1e6;
-			else
-				bufferSize = varargin{1};
-			end
-			obj.vObj = visa('keysight', 'USB0::0x2A8D::0x9008::MY60320153::0::INSTR');
-			set(obj.vObj, 'InputBufferSize', bufferSize);
-            % 状態がclosedであることの確認
-            if ( strcmp( get(obj.vObj, 'Status'), 'closed') )
-                  fopen(obj.vObj);
-                  fprintf('DSOS054A oscilloscope was successfully opened\n');
-            end
+        function obj = MID_Infiniium(visaaddr, varargin)
+            visaaddr = convertStringsToChars(visaaddr);
+			p = inputParser;
+            defaultBufferSize = 1e6;
+            addRequired(p, 'visaaddress', @ischar);
+            addParameter(p, 'buffersize', defaultBufferSize, @isnumeric);
+            parse(p,visaaddr,varargin{:})
 
+			obj.vObj = visadev(p.Results.visaaddress);
+			set(obj.vObj, 'InputBufferSize', p.Results.buffersize);
+            obj.bufferSize = get(obj.vObj, 'InputBufferSize');
+            obj.deviceModel = obj.vObj.Model;
+            fprintf('%s oscilloscope was successfully opened\n', obj.deviceModel);
+            splittedIDN = strsplit(obj.queryIDN(), ',');
+            obj.OscSoftwareVerStr = splittedIDN(4);
+            splittedVersionStr = strsplit(splittedIDN(4), '.');
+            obj.OscSoftwareVerNum = str2double(strcat(splittedVersionStr(1),'.',splittedVersionStr(2)));
         end
         % オシロスコープDSOS054Aのデストラクタ
         function delete(obj)
-            if( strcmp( get(obj.vObj, 'Status'), 'open'))
-            sendMessage(obj, ':RUN');
-            fclose(obj.vObj);
+            if( strcmpi( get(obj.vObj, 'Status'), 'open'))
+                sendMessage(obj, ':RUN');
+%                 fclose(obj.vObj);
             end
-            delete(obj.vObj);
-            fprintf('DSOS054A oscilloscope was successfully closed\n');
+            clear obj.vObj;
+            fprintf('%s oscilloscope was successfully closed\n', obj.deviceModel);
         end
 
 %%  メソッド（波形データ取得）
@@ -114,7 +116,7 @@ classdef MID_Infiniium < handle
         function acquireSingle(obj)
             sendMessage(obj, ':STOP');
             sendQuery(obj,'*OPC?');
-            sendQuery(obj, ':ADER?');
+            sendQuery(obj, ':ADER?'); % Is this requied? must be :PDER? ?
             sendMessage(obj,':SING');
             fprintf('now acquiring');
             while( 0 == str2double( sendQuery(obj, ':ADER?')) )
@@ -156,25 +158,24 @@ classdef MID_Infiniium < handle
             sendMessage(obj, ':WAV:DATA?');
             % 初めの2文字(2バイト)を符号付8ビット整数として読み込む（#N）
             precision = 'int8';
-            preStr = fread(obj.vObj, 2, precision);
+            preStr = read(obj.vObj, 2, precision);
             % Nだけ取得
             str_num = sscanf( char(preStr), '%*c%d' );
             % 続けてN文字だけ読み込みLを取得
-            bytesStr = fread(obj.vObj, str_num, precision);
+            bytesStr = read(obj.vObj, str_num, precision);
             % scanBytesの取得
             scanBytes = str2double( char(bytesStr) );
                          % scanBytesがInputBufferSizeを超えないかどうかの確認
-             if (scanBytes > 1e6)
-                fprintf('Error (readWaveform): increase InputBufferSize\n');
-                return;
+             if (scanBytes > obj.bufferSize)
+                error('Input buffersize is smaller than that to read waveform.\nIncrease it. (use `buffersize` option)');
              end
             % データの読み込み（WORD：8bit + 8bit = 16 bit，LSB first）
             precision = 'int16';
-            temp = fread(obj.vObj, scanBytes/2, precision);
+            temp = read(obj.vObj, scanBytes/2, precision);
 
             %terminal character の読み込み
             %これをしないと、入力バッファに値が残るのでquery INTERRUPTが生じる
-            dummy = fread(obj.vObj, 1, 'char');
+            [~] = read(obj.vObj, 1, 'char');
             waveform = (  double(temp)   - Yreference )*Yincrement + Yorigin;
             timevec  = ( (1:numel(temp))' - Xreference )*Xincrement + Xorigin;
         end
@@ -339,7 +340,7 @@ classdef MID_Infiniium < handle
             count = 0;
             while (count < 10)
                 try
-                    fprintf(obj.vObj, message);
+                    writeline(obj.vObj, message);
                     break;
                 catch exception
                     %エラー発生時は10回試行する。
@@ -354,13 +355,13 @@ classdef MID_Infiniium < handle
         end
         % クエリー
         function answer = sendQuery(obj, message)
-            if ( isempty(strfind(message, '?')) )
+            if ( ~contains(message, '?') )
                 fprintf('Error: the message is not a query!\n');
             else
                 count = 0;
                 while (count < 10)
                     try
-                        answer = strtrim( query(obj.vObj, message) );
+                        answer = strtrim( writeread(obj.vObj, message) );
                         break;
                     catch exception
                         %エラー発生時は10回試行する。

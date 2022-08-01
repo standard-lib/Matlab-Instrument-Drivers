@@ -1,3 +1,4 @@
+clear all
 devlist = visadevlist
 if(size(devlist,1) == 0 )
     fprintf('Device not found!');
@@ -13,11 +14,11 @@ else
     idxdev = 1;
 end
 dev = devlist(idxdev,:);
-fprintf('%s was selected', dev.Model);
+fprintf('%s was selected\n', dev.Model);
 
-osc = MID_Infiniium();
-[timevec, waveform, info] = osc.getWaveform();
+osc = MID_Infiniium(dev.ResourceName);
+[timevec, waveforms, info] = osc.getWaveform();
 
 % Display waveforms and channel infomation
-plot(timevec, waveform(1,:), timevec, waveform(2,:), timevec, waveform(3,:), timevec, waveform(4,:));
+plot(timevec, waveforms)
 info(1) 

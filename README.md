@@ -1,5 +1,7 @@
 # Matlab-Instrument-Drivers
 
+`At present, this driver is under development.`
+
 Matlab-Instrument-Drivers are codes that allows various experimental devices to be used from your Matlab program. This program requires the Instrument Control Toolbox.
 More instruments will be added as the number of devices in our laboratory increases.
 
@@ -20,7 +22,17 @@ More instruments will be added as the number of devices in our laboratory increa
 
 
 # Features
+## Oscilloscope `MID-Infiniium`
 
+You can get waveforms from your oscilloscope by:
+```Matlab: Read waveforms from oscilloscope
+devlist = visadevlist % Get available device list.
+dev = devlist(1,:);   % If the oscilloscope is in the index 1. 
+osc = MID_Infiniium(dev.ResourceName);         % Make handler of the oscilloscope from the VISA ResourceName such as "USB0::0x0699::0x036A::CU010105::0::INSTR"
+[timevec, waveforms, info] = osc.getWaveform();% Acquire waveform from the signal source and transfer the waveform data to MATLAB
+
+plot(timevec, waveforms);
+```
 
 # Requirement
  
