@@ -1,6 +1,7 @@
 # Matlab-Instrument-Drivers
 
-Matlab-Instrument-Drivers are codes that allows various experimental devices to be used from your Matlab program. This program requires the Instrument Control Toolbox.
+Matlab-Instrument-Drivers are MATLAB classes that allows your MATLAB codes to controll various experimental instruments. 
+This program requires the Instrument Control Toolbox.
 More instruments will be added as the number of devices in our laboratory increases.
 
 # Compatible Instrument List
@@ -21,6 +22,16 @@ More instruments will be added as the number of devices in our laboratory increa
 		* MXR-Series oscilloscopes
 		* EXR-Series oscilloscopes (The author tested in this oscilloscope)
 
+## Stepping motor controller `MID-CV87x`
+
+* Melec stepping motor controller C-V870 series
+	* Note: the motor controllers are used in the the scanner of Insight K.K. for ultrasonic C-scan.
+
+
+# Features
+
+This driver set does not implement all the functions of the experimental instruments. 
+The goal is to minimize the code written by the user by providing only the necessary functions.
 
 # Demo
 
@@ -34,10 +45,13 @@ osc = MID_Infiniium(dev.ResourceName);         % Make handler of the oscilloscop
 [timevec, waveforms, info] = osc.getWaveform();% Acquire waveform from the signal source and fetch the waveform data from the oscilloscope.
 plot(timevec, waveforms);
 ```
+## Stepping motor controller `MID-CV87x`
 
-# Features
-
-
+The motorized stages can be used by:
+```Matlab: Drive the motorized stage
+PS = MID_CV87x();
+PS.driveAbs('X',-30, 'Y', -30, 'Z', 30,'R', 30); % move to (X, Y, Z, R) = (-30, -30, 30, 30 )
+```
 
 # Requirement
  
@@ -51,7 +65,7 @@ For C-V87x Linear actuator
 # Installation
 
 1. Install VISA software (Keysight IO Library Suite (IOLS) is recommended).
-2. Copy the "instrument-drivers" folder to the folder that your script/function exists.
+2. Copy the contents of "instrument-drivers" folder to the folder that your script/function exists.
  
 # Usage
 
@@ -62,8 +76,13 @@ For C-V87x Linear actuator
 
 ## Oscilloscope `MID-Infiniium`
 
-The driver has been tested on Keysight EXR054A.
+Tested on Keysight EXR054A.
  
+## Stepping motor controller `MID-CV87x`
+
+Tested on Melec C-V872.
+
+
 # Author
  
 * Naoki MATSUDA
