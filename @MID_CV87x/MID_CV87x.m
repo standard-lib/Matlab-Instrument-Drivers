@@ -150,6 +150,17 @@ classdef MID_CV87x < handle
             end
         end
         
+        function addr = queryAddress(obj, axis)
+            % ADDRESS COUNTER PORT SELECTコマンドを用いたアドレス読み出し
+            % 取扱説明書（コマンド編）p89参照
+            obj.BWDriveCommand(axis,'F048');
+            obj.IRDrive(axis);
+            addr_double = obj.GetData(axis);
+            addr_uint32 = cast(addr_double, 'uint32');
+            addr = typecast(addr_uint32, 'int32');
+%             addr = typecast(binaddr, 'int32');
+        end
+        
         function setSpeed(obj, speed, varargin )
             tosetaxis = concatinputstr(varargin);
             for axischar = tosetaxis
@@ -979,7 +990,7 @@ classdef MID_CV87x < handle
         end   
         function DataRead(obj, num, HEX_CODE)
             %DataRead(obj, num, HEX_CODE) reads the data on DRIVE DATA PORT
-            %取説(コマンド編) P.72参照
+            %取説(コマンド編) P.71参照
             obj.Wait(num, 0);
             obj.BWDriveData(num, 3, HEX_CODE); %Command code(LSPD SET)
             obj.BWDriveCommand(num, '0089'); %HEX CODE (SET DATA READ)
