@@ -2,15 +2,13 @@ classdef MID_CV87x < handle
     % Scanner class
     %   obj = MID_CV87x()でインスタンスを定義
     %   例：
-    %       PS = C_V87xclass();--------------------オブジェクトPSを作成
-    %       PS.Address_Reset('Y');----------------アドレスをリセット
-    %       PS.SetDriveSpeed('S', 'Y', 'fast');---Y軸のS字ドライブ速度を'fast'に設定
-    %       PS.Drive('Y', 'absS', 30);------------Y軸のS字ドライブ(+30mm)を実行
+    %       PS = MID_CV87x();--------------------オブジェクトPSを作成
+    %       PS.resetAddress('Y');----------------アドレスをリセット
+    %       PS.setSpeed('Y', 'fast');---Y軸のS字ドライブ速度を'fast'に設定
+    %       PS.driveAbs('Y', 30, 'Z', 20);------------Y軸のS字ドライブ(+30mm)を実行
     % 変更したいこと一覧(2018松田）
-    % ・全体的にメソッドが多すぎる．もちょっと共通化してスリムにしたい．
     % ・可動域制限とか速度制限とかはscanner.confからデフォルトで読み込みたい．
     % ・Boardnumは軸の数だけ用意されるべきで，０を仮定したくない．
-    % ・sResultなどは配列である必要はない．各呼び出しに対して使い捨てで構わない．
     % ・Drive速度などをscanner.confを読み込んで決めさせたい．
     % ・軸の名前を strfind('XYZRA',
     % upper(num))で軸番号に変換しているが，軸の名前はscanner.confで決めたい
@@ -18,14 +16,9 @@ classdef MID_CV87x < handle
     % ・ジョグモードを追加したい．PS.jog()を実行すると，Escを押すまで，キー待ちをして，
     % F1:第1軸＋，F2:第1軸－，F3：第2軸＋．．．のようなジョグを行う．ショートカットキーはInsight Scanに準拠する．
     properties(SetAccess = private)
-        sResult;    % 各コマンドで結果を格納する構造体(ヘッダ参照)
-        sResultPtr; % 構造体のポインタ
-        sData ;     % 各コマンドでデータを格納する構造体(ヘッダ参照)
-        sDataPtr;   % 構造体のポインタ
         hDev;       % デバイス変数(32ビット符号なし整数DWORD)
-        hDevPtr;    % デバイス変数ポインタ
         Degmm2Pulse % 1Degree or 1mm が何パルスに対応するか
-        Move_Limit; %可動域制限:   あやまって大きく動かしすぎないように保険を掛ける
+        pulseReverse = [false, true, true, false]  % 軸を反転するか
         Vel_Max;    %速度域制限:   あやまって大きく動かしすぎないように保険を掛ける
         Accel_Max;  %加速度域制限: あやまって大きく動かしすぎないように保険を掛ける
         Vel_3level; %低中高 速度値: 低速と中速と高速の速度値を格納
@@ -37,12 +30,6 @@ classdef MID_CV87x < handle
     end    
     properties( Constant )
         Boardnum = uint16(0); % 2014/7/26現在Board numberは0だけ
-        RATE_DATA = [ 910 820 750 680 620 560 510 470 430 390 360 ...
-              330 300 270 240 220 200 180 160 150 130 120 110 ...
-              100  91  82  75  68  62  56  51  47  43  39  36 ...
-               33  30  27  24  22  20  18  16  15  13  12  11 ...
-               10 9.1 8.2 7.5 6.8 6.2 5.6 5.1 4.7 4.3 3.9 3.6 ...
-               3.3]; %設定可能な加速度[ms/kHz]の一覧
     end
    
     methods
@@ -53,30 +40,12 @@ classdef MID_CV87x < handle
             end
             obj.Axis_num = uint32([0 1 2 3]);
             obj.Axis_char = 'XYZR';
-            %ポインタの生成
-            obj.hDev       =  uint32(0);  %BOpenで割り当てられるのでここでは適当な値
-            obj.hDevPtr    =  libpointer( 'uint32Ptr', obj.hDev );
-            obj.sResult    = struct('MC06_Result', zeros(1,4, 'uint16'));
-            obj.sResultPtr = libpointer( 'MC06_TAG_S_RESULT', obj.sResult );
-            obj.sData      = struct('MC06_Data',zeros(1,4,'uint16'));
-            obj.sDataPtr   = libpointer( 'MC06_TAG_S_DATA', obj.sData );
-
-            for J=1:numel(obj.Axis_num)
-                obj.hDev(J)       =  uint32(0);  %BOpenで割り当てられるのでここでは適当な値
-                obj.hDevPtr(J)    =  libpointer( 'uint32Ptr', obj.hDev(J) );
-            end
             
-            for J=1:numel(obj.Axis_num)
-                obj.sResult(J)    =  struct('MC06_Result', zeros(1,4, 'uint16'));
-                obj.sResultPtr(J) =  libpointer( 'MC06_TAG_S_RESULT', obj.sResult(J) );
-                obj.sData(J)      =  struct('MC06_Data',zeros(1,4,'uint16'));
-                obj.sDataPtr(J)   =  libpointer( 'MC06_TAG_S_DATA', obj.sData(J) );
-            end
             obj.Degmm2Pulse = [1000, 1000, 5000, 100000/360];  %[Pulse/mm, Pulse/mm, Pulse/mm, Pulse/deg, Pulse/deg]
                                                                              %X,Y: 500*40/10,  基本ステップ角:500Pulse/Rev, 分割設定:1/40,  ねじピッチ:10mm
                                                                              %Z  : 200*100/2,  基本ステップ角:200Pulse/Rev, 分割設定:1/100, ねじピッチ:2mm
                                                                              %R,A: 500*200/360,基本ステップ角:500Pulse/Rev, 分割設定:1/200
-            obj.Move_Limit = [ 713,  468, 310, 180];          %[mm, mm, mm, deg]
+%             obj.Move_Limit = [ 713,  468, 310, 180];          %[mm, mm, mm, deg]
             obj.Vel_Max    = [ 750,  200,  10,  50];            %[mm/s, mm/s, mm/s, deg/s, deg/s]
             obj.Accel_Max  = [5000, 1000, 200, 0.2];      %[mm/s^2, mm/s^2, mm/s^2, deg/s^2, deg/s^2]
             obj.Vel_3level = [   5,  40,  80; ...
@@ -103,9 +72,10 @@ classdef MID_CV87x < handle
             obj.SetDriveSpeed('S', 'R', 'slow');
             
             % 第4軸は北條研の装置では，ストッパの論理がデフォルトとは逆なので，必ず直させる．
-            obj.BWDriveData(4, 3, 'FFF3');     % Statusを見に行かない．ちょっとお行儀悪い．
-            obj.BWDriveCommand(4, 'F007');
-          %      obj.Address_Reset( 'X','Y','Z','R','A' ); %原点設定
+            devNum = 4;
+            dataarr = zeros(1,3, 'uint16');
+            dataarr(3) = uint16(0xFFF3); %set CWLM and CCWLM to negative logic inputs
+            obj.writeMC06( devNum, 'drive', obj.HARD_INITIALIZE7, dataarr, 3);
         end
         
         %////// 処理関数 //////
@@ -144,21 +114,20 @@ classdef MID_CV87x < handle
             for axischar = toresetaxis
                 num = int32(strfind(obj.Axis_char, upper(axischar)));
                 assert( ~isempty(num), 'Invalid axis name `%c` is specified', axischar);
-                obj.Wait(num, 0);
-                obj.SetData1(num, 0);
-                obj.IWCounter(num, '0000');
+                %本当はdataarr = setdata1_24(設定したいカウント)ができる。
+                obj.writeMC06( num, 'counter', obj.ADDRESS_COUNTER_PRESET, zeros(1,3, 'uint16'), [2 3]);
             end
         end
         
-        function addr = queryAddress(obj, axis)
+        function [addr] = queryAddress(obj)
             % ADDRESS COUNTER PORT SELECTコマンドを用いたアドレス読み出し
             % 取扱説明書（コマンド編）p89参照
-            obj.BWDriveCommand(axis,'F048');
-            obj.IRDrive(axis);
-            addr_double = obj.GetData(axis);
-            addr_uint32 = cast(addr_double, 'uint32');
-            addr = typecast(addr_uint32, 'int32');
-%             addr = typecast(binaddr, 'int32');
+            addr = zeros(1,4);
+            for axis = 1:4
+                dataarr = obj.readMC06( axis, obj.ADDRESS_COUNTER_PORT_SELECT);
+                addr_int32 = getdata(dataarr, 'int32');
+                addr(axis) = addr_int32 / obj.Degmm2Pulse(axis);
+            end
         end
         
         function setSpeed(obj, speed, varargin )
@@ -179,55 +148,39 @@ classdef MID_CV87x < handle
                 return
             end
 
+            result = struct('MC06_Result', zeros(1,4, 'uint16'));
+            resultPtr = libpointer( 'MC06_TAG_S_RESULT', result );
             FUNC_NAME = 'MC06_BWaitDriveCommand';
             Wait_time = 0;
             if ~isempty(varargin), Wait_time = varargin{1}; end
             if Wait_time<0, Wait_time = 0; end
 
-            [temp, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), uint16(Wait_time), obj.sResultPtr(num));
-            if ~temp || obj.sResult(num).MC06_Result(2)
-                error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2));
-            end
+            [retVal, result] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), uint16(Wait_time), resultPtr);
+            obj.assertionMC06(retVal, result); % call error function
         end
-        function Address_Reset(obj, varargin)
-            %Address_Reset(obj, num) sets the current position as origin.
-            %   引数: 1, 2, 3, 4, 5 or 'X', 'Y', 'Z', 'R', 'A' これ以外は無視
-            %   引数は何個でもOK
-            %   ex)  obj.Address_Reset( 'X', 'Z', 'A' ),
-            %        obj.Address_Reset( 1, 2, 3 )
-            %   You'd better use this when 'AbsDrive' is excuted.
 
-            for J=1:numel(varargin)
-                if ischar(varargin{J})
-                    num = int32( strfind('XYZRA', upper(varargin{J})) ); %文字列の場合 ==> 番号に変換
-                else
-                    num = varargin{J};
-                end 
-                if num>=1 && num<=5
-                    obj.Wait(num, 0);
-                    obj.SetData1(num, 0);
-                    obj.IWCounter(num, '0000');
-                end
-            end
-
-        end
-        function ScanStop(obj, num)
+        function stopScan(obj, devNum)
             %ScanStop(obj, num) stops the scan right now
             %   num: 1, 2, 3, 4, 5 or 'X', 'Y', 'Z', 'R', 'A' 
-            if ischar(num), num = int32( strfind('XYZRA', upper(num)) ); end %numが文字列の場合 ==> 番号に変換
-            if num<1 || num>5 || isempty(num)
+            if ischar(devNum), devNum = int32( strfind('XYZRA', upper(devNum)) ); end %numが文字列の場合 ==> 番号に変換
+            if devNum<1 || devNum>5 || isempty(devNum)
                 fprintf('Invalid argument. 1~5 or ''X'',''Y'',''Z'',''R'',''A'' is accepted.');
                 return
             end
-            obj.BWDriveCommand(num, 'F00F');
+            result = struct('MC06_Result', zeros(1,4, 'uint16'));
+            resultPtr = libpointer( 'MC06_TAG_S_RESULT', result );
+            command = obj.FAST_STOP; % FAST STOP COMMAND 即時停止
+            cmdPtr = libpointer('uint16Ptr', command);
+            [retVal, ~, result] = calllib('Mc06A', 'MC06_BWDriveCommand', obj.hDev(devNum), cmdPtr, resultPtr);
+            obj.assertionMC06(retVal, result); % call error function
         end
 
         %////// ScanDrive関連 (HEX CODE: 0020~0025, 0042~0045) //////
         function Drive(obj, Axisname, SCAN_TYPE, varargin)
             %Drive(obj, Axisname, SCAN_TYPE, varargin) excutes the drive
             %   Axisname  : 'X', 'Y', 'Z', 'R', or 'A'
-            %   SCAN_TYPE : '+J'   :  +Jog Drive
-            %               '-J'   :  -Jog Drive
+            %   SCAN_TYPE : '+J'   :  +Jog Drive (one pulse)
+            %               '-J'   :  -Jog Drive (one pulse)
             %               '+L'   :  + L_shape Drive (infinitely)
             %               '-L'   :  - L_shape Drive (infinitely)
             %               'incL' :  L_shape INC INDEX Drive
@@ -243,34 +196,30 @@ classdef MID_CV87x < handle
                 num = int32( strfind('XYZRA', upper(Axisname)) ); %これでX,Y,Z,R,Aを1,2,3,4,5に対応付けできる
             end
             if isempty(num)
-                fprintf('Axisname has to be ''X'',''Y'',''Z'',''R'', or ''A''\n');
-            else
-                switch SCAN_TYPE
-                    case '+J'
-                        obj.Jog_plus(num);
-                    case '-J'
-                        obj.Jog_minus(num);
-                    case '+L'
-                        obj.L_Scan_plus(num);
-                    case '-L'
-                        obj.L_Scan_minus(num);
-                    case 'incL'
-                        obj.L_IncDrive(num, varargin{1});
-                    case 'absL'
-                        obj.L_AbsDrive(num, varargin{1});
-                    case '+S'
-                        obj.S_Scan_plus(num);
-                    case '-S'
-                        obj.S_Scan_minus(num);
-                    case 'incS'
-                        obj.S_IncDrive(num, varargin{1});
-                    case 'absS'
-                        obj.S_AbsDrive(num, varargin{1});
-                    otherwise
-                        fprintf('invalid ''SCANTYPE''\n');
-                end
+                error('Axisname has to be ''X'',''Y'',''Z'',''R'', or ''A''');
             end
-            
+            jogLikeKeys = {'+J', '-J', '+L', '-L', '+S', '-S'};
+            jogLikeCommands = [obj.PLUSJOG, obj.MINUSJOG, obj.PLUSSCAN, obj.MINUSSCAN, obj.PLUS_SRATE_SCAN, obj.MINUS_SRATE_SCAN];
+            incLikeKeys = {'incL', 'absL', 'incS', 'absS'};
+            incLikeCommands = [obj.INC_INDEX, obj.ABS_INDEX, obj.INC_SRATE_INDEX, obj.ABS_SRATE_INDEX];
+            switch SCAN_TYPE
+                case jogLikeKeys
+                    % +JOG, -JOG, +SCAN, -SCAN, +SRATE_SCAN, -SRATE_SCAN
+                    command = jogLikeCommands( strcmp(jogLikeKeys, SCAN_TYPE) );
+                    obj.writeMC06( num, 'drive', command, [], [] );
+%                     obj.Wait(num, 0);
+%                     obj.BWDriveCommand(num, dec2hex(command));
+                case incLikeKeys
+                    % INC_INDEX, ABS_INDEX, INC_SRATE_INDEX,
+                    % ABS_SRATE_INDEX
+                    Degmm = varargin{1};
+                    pulse_num = int32( Degmm*obj.Degmm2Pulse(num) ); %Number of pulses
+                    command = incLikeCommands( strcmp(incLikeKeys, SCAN_TYPE) );
+                    dataarr = setdata1_32(pulse_num);
+                    obj.writeMC06( num, 'drive', command, dataarr, [2 3]);
+                otherwise
+                    error('invalid SCANTYPE');
+            end
         end
         
         %////// 設定関連(Drive parameters) //////
@@ -309,19 +258,19 @@ classdef MID_CV87x < handle
             %   LorS     : 'L' or 'S'
             %   Axisname : 'X', 'Y', 'Z', 'R', or 'A'
             %   Speed    : 'slow', 'medium', or 'fast'
-            if nargin~=4, error('Wrong number of input arguments') ; end
-            
+            assert( nargin==4, 'Wrong number of input arguments');
             num = int32( strfind('XYZRA', upper(Axisname)) ); %これでX,Y,Z,R,Aを1,2,3,4,5に対応付けできる
-            if isempty(num)
-                fprintf('Axisname has to be ''X'',''Y'',''Z'',''R'', or ''A''\n');
-            else
-                if strcmp(LorS, 'L')
-                    obj.L_SetDriveSpeed(num, Speed);
-                elseif strcmp(LorS, 'S')
-                    obj.S_SetDriveSpeed(num, Speed);
-                else
-                    fprintf('1st argument has to be ''L'' or ''S''\n');
-                end
+            assert( ~isempty(num), 'Axisname has to be ''X'',''Y'',''Z'',''R'', or ''A''');
+            speed_text = {'slow', 'medium', 'fast'};
+            speed_idx = find(strcmpi(speed_text, Speed));
+            assert( ~isempty(speed_idx), '''Speed'' has to be ''slow'', ''medium'', or ''fast''');
+            assert( any( strcmp(LorS, {'L', 'S'})), '1st argument has to be ''L'' or ''S''');
+            if strcmp(LorS, 'L')
+                obj.L_SetDrivePara(num, obj.Ini_Ldrive_data(num,1), obj.Vel_3level(num,speed_idx(1)), obj.Ini_Ldrive_data(num,3), obj.Ini_Ldrive_data(num,4));
+            elseif strcmp(LorS, 'S')
+                obj.S_SetDrivePara( num, obj.Ini_Sdrive_data(num,1), obj.Vel_3level(num,speed_idx(1)), obj.Ini_Sdrive_data(num,3), ...
+                                        obj.Ini_Sdrive_data(num,4), obj.Ini_Sdrive_data(num,5), obj.Ini_Sdrive_data(num,6), ...
+                                        obj.Ini_Sdrive_data(num,7), obj.Ini_Sdrive_data(num,8) );
             end
         end
 
@@ -361,16 +310,15 @@ classdef MID_CV87x < handle
             %   This function is automatically called by the Constructor, so
             %   you don't need to care about this function
             FUNC_NAME = 'MC06_BOpen';
-            for J=1:numel(obj.Axis_num)
-                [temp, obj.hDev(J), obj.sResult(J)] = calllib('Mc06A', FUNC_NAME, obj.Boardnum, obj.Axis_num(J), obj.hDevPtr(J), obj.sResultPtr(J));
-                if ~temp || obj.sResult(J).MC06_Result(2)
-                    disp(obj.sResult(J));
-                    error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, J, obj.sResult(J).MC06_Result(2));
-                else
-                   %fprintf('hDev=%d, sResult=[%d,%d,%d,%d]\n', obj.hDev(J), obj.sResult.MC06_Result(J,:)); 
-                    %disp(['MC06_BOpen done' char(10)])
-                end
+            result = struct('MC06_Result', zeros(1,4, 'uint16'));
+            resultPtr = libpointer( 'MC06_TAG_S_RESULT', result );
+            devHandler = zeros(8,1, 'uint32');
+            for idxDev=1:numel(obj.Axis_num)
+                hDevPtr  =  libpointer( 'uint32Ptr', devHandler(idxDev) );
+                [retVal, devHandler(idxDev), result] = calllib('Mc06A', FUNC_NAME, obj.Boardnum, obj.Axis_num(idxDev), hDevPtr, resultPtr);
+                obj.assertionMC06(retVal, result); % call error function
             end
+            obj.hDev = devHandler(1:numel(obj.Axis_num));
             fprintf('All devices were successfully opened\n');
         end
         function BClose(obj)
@@ -378,387 +326,95 @@ classdef MID_CV87x < handle
             %   This function is automatically called by the Destructor, so
             %   you don't need to care about this function
             FUNC_NAME = 'MC06_BClose';
+            result = struct('MC06_Result', zeros(1,4, 'uint16'));
+            resultPtr = libpointer( 'MC06_TAG_S_RESULT', result );
             for J=1:numel(obj.Axis_num)
-                [temp, obj.sResult(J)] = calllib('Mc06A', FUNC_NAME, obj.hDev(J), obj.sResultPtr(J));
-                if ~temp || obj.sResult(J).MC06_Result(2)
-                    if obj.sResult(J).MC06_Result(2)==7
-                        error('(BClose) Device handle is abnormal. File is not opened from the first.');
-                    else
-                        error(['Error occured (BClose)' char(10)]);
-                    end
-                else
-                % disp(['MC06_BClose done' char(10)])    
-                end
+                [retVal, result] = calllib('Mc06A', FUNC_NAME, obj.hDev(J), resultPtr);
+                obj.assertionMC06(retVal, result); % call error function
             end
         end
         %////// 書き込み関連 //////
-        function IWDrive(obj, num, HEX_CODE)
-            %IWDrive(obj, num, 'HEX_CODE') writes in a lump the Command Code&Data on the
-            %DRIVE COMMAND&DATA PORT 1,2,3
-            if nargin~=3, error('Wrong number of input arguments') ; end
+        % signatures in the private folder
+        assertin(value, minimum, maximum)
+        assertin_oc(value, minimum, maximum)
+        [concatenatedstr] = concatinputstr(celllist)
+        [value32] = getdata(arraydata, type)
+        [valMSB, valLSB] = getdata_two8(arraydata, type)
+        [arraydata] = setdata1_24(indata) %signature of setdata1_24
+        [arraydata] = setdata_two8(indataMSB, indataLSB)
+        
+        function writeMC06(obj, devNum, DriveOrCounter, command, dataarray, senddata )
+            arguments
+                obj
+                devNum
+                DriveOrCounter
+                command uint16
+                dataarray uint16
+                senddata 
+            end
+            DorC = find(strcmpi({'drive', 'counter'}, DriveOrCounter), 1);
+            assert(~isempty(DorC), 'DriveOrCounter is not ''drive'' nor ''counter''');
+            result = struct('MC06_Result', zeros(1,4, 'uint16'));
+            resultPtr = libpointer( 'MC06_TAG_S_RESULT', result );
             
-            FUNC_NAME = 'MC06_IWDrive';
-            Cmd = uint16( hex2dec(HEX_CODE) ); %HEX CODE (16進数)
-            [temp, obj.sData(num), obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), Cmd, obj.sDataPtr(num), obj.sResultPtr(num));
-            if ~temp || obj.sResult(num).MC06_Result(2)
-                error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME,temp, num, obj.sResult(num).MC06_Result(2))
-            end          
-        end
-        function IWData(obj, num)
-            %IWData(obj, num) writes the Command Data on the DRIVE COMMAND DATA
-            %PORT 1,2,3
-            if nargin~=2, error('Wrong number of input arguments') ; end
-            FUNC_NAME = 'MC06_IWData';
-            [temp, obj.sData(num), obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), obj.sDataPtr(num), obj.sResultPtr(num));
-            if ~temp || obj.sResult(num).MC06_Result(2)
-                error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2))
-            end          
-        end
-        function BWDriveCommand(obj, num, HEX_CODE)
-            %BWDriveCommand(obj, num, 'HEX_CODE') writes the Command Code on the DRIVE COMMAND PORT
-            if nargin~=3, error('Wrong number of input arguments') ; end
-            
-            FUNC_NAME = 'MC06_BWDriveCommand';
-            Cmd = uint16( hex2dec(HEX_CODE) ); %HEX CODEを10進数のuint16に
-            CmdPtr = libpointer('uint16Ptr', Cmd); %HEX CODEのポインタ
-            [temp, ~, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), CmdPtr, obj.sResultPtr(num));
-            if ~temp || obj.sResult(num).MC06_Result(2)
-                error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d',  FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2))
-            end            
-        end
-        function BWDriveData(obj, num, number, HEX_CODE)
-            %BWDriveData(obj, num, number, HEX_CODE) writes the 'HEX_CODE' on the DRIVE DATA PORT 'number'
-            
-            if nargin == 4
-                switch number
-                    case 1
-                        FUNC_NAME = 'MC06_BWDriveData1';
-                    case 2
-                        FUNC_NAME = 'MC06_BWDriveData2';
-                    case 3
-                        FUNC_NAME = 'MC06_BWDriveData3';
-                    otherwise
-                        error('DrivePort Number has to be 1, 2, or 3')
-                end
-                Cmd = uint16( hex2dec(HEX_CODE) );
-                pDataPtr = libpointer('uint16Ptr', Cmd);
-                [temp, ~, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), pDataPtr, obj.sResultPtr(num));
-                if ~temp || obj.sResult(num).MC06_Result(2)
-                    error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2))
-                end
+            if( DorC == 1 && any(senddata == 1) && any( senddata == 2) && any( sendata == 3) ) 
+                % driveデータの場合、すべてのデータを送るコマンドがあるのでそちらを優先
+                data = struct('MC06_Data',[dataarray(1), dataarray(2), dataarray(3), uint16(0)]);
+                dataPtr = libpointer( 'MC06_TAG_S_DATA', data );
+                [retVal, ~, result] = calllib('Mc06A', 'MC06_IWData', obj.hDev(devNum), dataPtr, resultPtr);
+                obj.assertionMC06(retVal, result); % call error function
             else
-               error('Wrong number of input arguments(BWDriveData)') 
+                funcNames = {...
+                    'MC06_BWDriveData1', ...
+                    'MC06_BWDriveData2', ...
+                    'MC06_BWDriveData3'; ...
+                    'MC06_BWCounterData1', ...
+                    'MC06_BWCounterData2', ...
+                    'MC06_BWCounterData3'};
+                for senddata_idx = senddata
+                    dataPtr = libpointer('uint16Ptr', dataarray( senddata_idx ));
+                    [retVal, ~, result] = calllib('Mc06A', funcNames{DorC, senddata_idx}, obj.hDev(devNum), dataPtr, resultPtr);
+                    obj.assertionMC06(retVal, result); % call error function
+                end
+            end
+            
+            obj.Wait( devNum, 0 );
+            
+            switch(DriveOrCounter)
+            case 'drive'
+                cmdPtr = libpointer('uint16Ptr', command);
+                [retVal, ~, result] = calllib('Mc06A', 'MC06_BWDriveCommand', obj.hDev(devNum), cmdPtr, resultPtr);
+                obj.assertionMC06(retVal, result); % call error function
+            case 'counter'
+                cmdPtr = libpointer('uint16Ptr', command);
+                [retVal, ~, result] = calllib('Mc06A', 'MC06_BWCounterCommand', obj.hDev(devNum), cmdPtr, resultPtr);
+                obj.assertionMC06(retVal, result); % call error function
             end
         end
-        function IWCounter(obj, num,  HEX_CODE)
-            %IWCounter(obj, num, 'HEX_CODE') writes in a lump the Counter Code&Data on the
-            %COUNTER COMMAND&DATA PORT(1,2,3)
-            if nargin~=3, error('Wrong number of input arguments') ; end
 
-            FUNC_NAME = 'MC06_IWCounter';
-            Cmd = uint16( hex2dec(HEX_CODE) ); %HEX CODE (16進数)
-            [temp, obj.sData(num), obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), Cmd, obj.sDataPtr(num), obj.sResultPtr(num));
-            if ~temp || obj.sResult(num).MC06_Result(2)
-                error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME,temp, num, obj.sResult(num).MC06_Result(2))
-            end          
+        function [dataarray] = readMC06(obj, devNum, command )
+            %MC06コマンド"command"をDRIVE COMMAND PORTに送ったあとに、DRIVE DATA1～DATA3
+            %PORTを読み込んで返す。
+            result = struct('MC06_Result', zeros(1, 4, 'uint16'));
+            resultPtr = libpointer( 'MC06_TAG_S_RESULT', result );
+            cmdPtr = libpointer('uint16Ptr', command);
+            [retVal, ~, result] = calllib('Mc06A', 'MC06_BWDriveCommand', obj.hDev(devNum), cmdPtr, resultPtr);
+            obj.assertionMC06(retVal, result); % call error function
+            
+            data = struct('MC06_Data', zeros(1, 4, 'uint16'));
+            dataPtr = libpointer( 'MC06_TAG_S_DATA', data );
+            [retVal, data, result] = calllib('Mc06A', 'MC06_IRDrive', obj.hDev(devNum), dataPtr, resultPtr);
+            obj.assertionMC06(retVal, result); % call error function
+            dataarray = data.MC06_Data(1:3);
         end
-        function BWCounterCommand(obj, num, HEX_CODE)
-            %BWCounterCommand(obj, num, 'HEX_CODE') writes the Command Code on the COUNTER COMMAND PORT
-            if nargin~=3, error('Wrong number of input arguments') ; end
-            FUNC_NAME = 'MC06_BWCounterCommand';
-
-            Cmd = uint16( hex2dec(HEX_CODE) ); %HEX CODEを10進数のuint16に
-            CmdPtr = libpointer('uint16Ptr', Cmd); %HEX CODEのポインタ
-            [temp, ~, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), CmdPtr, obj.sResultPtr(num));
-            if ~temp || obj.sResult(num).MC06_Result(2)
-                error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d',  FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2))
-            end            
-        end       
-        function BWCounterData(obj, num, number, pData)
-            %BWCounterData(obj, num, number, pData) writes the 'pData' on the DRIVE DATA PORT 'number'
-            if nargin == 4
-                switch number
-                    case 1
-                        FUNC_NAME = 'MC06_BWCounterData1';
-                    case 2
-                        FUNC_NAME = 'MC06_BWCounterData2';
-                    case 3
-                        FUNC_NAME = 'MC06_BWCounterData3';
-                    otherwise
-                        error('DrivePort Number has to be 1, 2, or 3')
-                end
-                pDataPtr = libpointer('uint16Ptr', pData);
-                [temp, ~, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), pDataPtr, obj.sResultPtr(num));
-                if ~temp || obj.sResult(num).MC06_Result(2)
-                    error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2));
-                end
-            else
-               error('Wrong number of input arguments(BWDriveData)') 
+        
+        function assertionMC06( obj, retVal, result )
+            if(~retVal)
+                error( [obj.errorMsg{result.MC06_Result(2)} 'in axis %d'], devNum);
             end
-        end
-        function SetData1(obj, num, pData)
-            %SetData1(obj, num, pData) calls 'MC06_SetData1'
-            if nargin~=3, error('Wrong number of input arguments') ; end
-            obj.sData(num) = calllib('Mc06A', 'MC06_SetData1', uint32(pData), obj.sDataPtr(num));
-        end
-        function pData = GetData(obj, num)
-            %GetData(obj, num) calls 'MC06_GetData'
-            [pData, ~] = calllib('Mc06A', 'MC06_GetData', obj.sDataPtr(num));
         end
         
         %////// 読み込み関連 //////
-        function psData = BRStatus(obj, num, number)
-            %psData = BRStatus(obj, num, number) reads the data from STATUS (number) PORT
-            if nargin == 3
-                switch number
-                    case 1
-                        FUNC_NAME = 'MC06_BRStatus1';
-                    case 2
-                        FUNC_NAME = 'MC06_BRStatus2';
-                    case 3
-                        FUNC_NAME = 'MC06_BRStatus3';
-                    case 4
-                        FUNC_NAME = 'MC06_BRStatus4';
-                    case 5
-                        FUNC_NAME = 'MC06_BRStatus5';
-                    otherwise
-                        error('STATUS PORT Number has to be 1, 2, 3, 4, or 5');
-                end
-                psData = uint16(0);
-                psDataPtr = libpointer('uint16Ptr', psData);
-                [temp, psData, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), psDataPtr, obj.sResultPtr(num));
-                if ~temp || obj.sResult(num).MC06_Result(2)
-                    error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2));
-                end
-            else
-               error('Wrong number of input arguments(BWDriveData)') ;
-            end
-        end
-        function IRDrive(obj, num)
-            %IRDrive(obj, num) reads in a lump the data from DRIVE DATA 1,2,3 PORT
-            FUNC_NAME = 'MC06_IRDrive';
-            [temp, obj.sData(num), obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), obj.sDataPtr(num), obj.sResultPtr(num));
-            if ~temp || obj.sResult(num).MC06_Result(2)
-                error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2));
-            end
-        end
-        function pData = BRDriveData(obj, num, number)
-            %pData = BRDriveData(obj, num, number) reads the data from DRIVE DATA (number) PORT
-            if nargin == 3
-                switch number
-                    case 1
-                        FUNC_NAME = 'MC06_BRDriveData1';
-                    case 2
-                        FUNC_NAME = 'MC06_BRDriveData2';
-                    case 3
-                        FUNC_NAME = 'MC06_BRDriveData3';
-                    otherwise
-                        error('DrivePort Number has to be 1, 2, or 3')
-                end
-                pData = uint16(0);
-                pDataPtr = libpointer('uint16Ptr', pData);
-                [temp, pData, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), pDataPtr, obj.sResultPtr(num));
-                if ~temp || obj.sResult(num).MC06_Result(2)
-                    error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2));
-                end
-            else
-               error('Wrong number of input arguments(BWDriveData)');
-            end
-        end
-  
-        %////// "設定関連(Drive parameters)"で使用 //////
-        function L_DriveSet_LSPD(obj, num, LSPD)
-            % L_DriveSet_LSPD(obj, num, LSPD) sets the L-shape Drive Parameter LSPD
-            % LSPD : Start&End speed [Hz]
-            if nargin~=3, error('Wrong number of input arguments') ; end
-            obj.SetData1(num, LSPD);
-            obj.Wait(num, 0);
-            obj.IWDrive(num, '0010');
-             %{   
-            if num==0 || num==1 || num==2
-                fprintf(' \nLSPD(Start&End speed) was changed to %.1f[Hz](= %.2f[mm/s])\n' ...
-                        , LSPD, LSPD/obj.Degmm2Pulse(num));
-            else
-                fprintf(' \nLSPD(Start&End speed) was changed to %.1f[Hz](= %.2f[deg/s])\n' ...
-                        , LSPD, LSPD/obj.Degmm2Pulse(num));
-            end
-            %}
-        end
-        function L_DriveSet_HSPD(obj, num, HSPD)
-            % L_DriveSet_HSPD(obj, num, HSPD) sets the L-shape Drive Parameter HSPD
-            % HSPD : Maximum speed [Hz]
-            if nargin~=3, error('Wrong number of input arguments') ; end
-            obj.SetData1(num, HSPD);
-            obj.Wait(num, 0);
-            obj.IWDrive(num, '0011');
-            %{
-            if num==0 || num==1 || num==2
-                fprintf(' HSPD(maximum speed) was changed to %.1f[Hz](= %.2f[mm/s])\n' ...
-                        , HSPD, HSPD/obj.Degmm2Pulse(num));
-            else
-                fprintf(' HSPD(maximum speed) was changed to %.1f[Hz](= %.2f[deg/s])\n' ...
-                        , HSPD, HSPD/obj.Degmm2Pulse(num));
-            end
-            %}
-        end
-        function L_DriveSet_UDRATE(obj, num, URATE, DRATE)
-            %L_DriveSet_UDRATE(obj, num, URATE,DRATE) sets the L-shape Drive Parameter URATE&DRATE
-            %  URATE : start acceleration [ms/kHz]
-            %  DRATE : end   acceleration [ms/kHz]
-            %  The nearest value will be choosed from RATE_DATA[:]
-            if nargin~=4, error('Wrong number of input arguments'); end
-
-            [~, J1] = min( abs(obj.RATE_DATA - URATE) ); %URATEにいちばん近い値を配列RATE_DATAから検索
-            URATE_CODE = num2str( dec2hex(J1) );         %要素番号をTABLE NO. (HEX CODE)にconvert
-            while length(URATE_CODE)<2, URATE_CODE=strcat('0',URATE_CODE); end %無理やり0をつけて2桁にする
-
-            [~, J2] = min( abs(obj.RATE_DATA - DRATE) ); %DRATEにいちばん近い値を配列RATE_DATAから検索
-            DRATE_CODE = num2str( dec2hex(J2) );         %要素番号をTABLE NO. (HEX CODE)にconvert
-            while length(DRATE_CODE)<2, DRATE_CODE=strcat('0',DRATE_CODE); end %無理やり0をつけて2桁にする
-
-            S = strcat( URATE_CODE, DRATE_CODE ); %4桁の HEX_CODE作成
-            obj.BWDriveData(num, 3, S);
-            obj.Wait(num, 0);
-            obj.BWDriveCommand(num, '0013');
-
-            %{
-            if num==0 || num==1 || num==2
-                fprintf(' URATE(start acceleration) was changed to %.1f[ms/kHz](= %.2f[mm/s^2])\n' ...
-                        ,obj.RATE_DATA(J1), 1e6/obj.RATE_DATA(J1)/obj.Degmm2Pulse(num));
-                fprintf(' DRATE(end   acceleration) was changed to %.1f[ms/kHz](= %.2f[mm/s^2])\n' ...
-                        ,obj.RATE_DATA(J2), 1e6/obj.RATE_DATA(J2)/obj.Degmm2Pulse(num));
-            else
-                fprintf(' URATE(start acceleration) was changed to %.1f[ms/kHz](= %.2f[deg/s^2])\n' ...
-                        ,obj.RATE_DATA(J1), 1e6/obj.RATE_DATA(J1)/obj.Degmm2Pulse(num));
-                fprintf(' DRATE(end   acceleration) was changed to %.1f[ms/kHz](= %.2f[deg/s^2])\n\n' ...
-                        ,obj.RATE_DATA(J2), 1e6/obj.RATE_DATA(J2)/obj.Degmm2Pulse(num));
-            end
-            %}
-        end
-        function S_DriveSet_SLSPD(obj, num, SLSPD)
-            % S_DriveSet_SLSPD(obj, num, SLSPD) sets the S-shape Drive Parameter SSPD
-            % SLSPD : Start&End speed [Hz]
-            if nargin~=3, error('Wrong number of input arguments') ; end
-
-            obj.SetData1(num, SLSPD);
-            obj.Wait(num, 0);
-            obj.IWDrive(num, '0030');
-
-            %{
-            if num==0 || num==1 || num==2
-                fprintf(' \nSLSPD(Start&End speed) was changed to %.1f[Hz](= %.2f[mm/s])\n' ...
-                        , SLSPD, SLSPD/obj.Degmm2Pulse(num));
-            else
-                fprintf(' \nSLSPD(Start&End speed) was changed to %.1f[Hz](= %.2f[deg/s])\n' ...
-                        , SLSPD, SLSPD/obj.Degmm2Pulse(num));
-            end
-            %}
-        end
-        function S_DriveSet_SHSPD(obj, num, SHSPD)
-            % S_DriveSet_SHSPD(obj, num, SHSPD) sets the S-shape Drive Parameter SHSPD
-            % SHSPD : Maximum speed [Hz]
-            if nargin~=3, error('Wrong number of input arguments') ; end
-
-            obj.SetData1(num, SHSPD);
-            obj.Wait(num, 0);
-            obj.IWDrive(num, '0031');
-           %{
-            if num==0 || num==1 || num==2
-                fprintf(' SHSPD(maximum speed) was changed to %.1f[Hz](= %.2f[mm/s])\n' ...
-                        , SHSPD, SHSPD/obj.Degmm2Pulse(num));
-            else
-                fprintf(' SHSPD(maximum speed) was changed to %.1f[Hz](= %.2f[deg/s])\n' ...
-                        , SHSPD, SHSPD/obj.Degmm2Pulse(num));
-            end
-            %}
-        end
-        function S_DriveSet_SUDRATE(obj, num, SURATE, SDRATE)
-            %S_DriveSet_SUDRATE(obj, num, SURATE, SDRATE) sets the S-shape Drive Parameter SURATE & SDRATE
-            %   SURATE : start acceleration [ms/kHz]
-            %   SDRATE : end   acceleration [ms/kHz]
-            %   The nearest value will be choosed from RATE_DATA[:]
-            if nargin~=4, error('Wrong number of input arguments'); end
-            
-            [~, J1] = min( abs(obj.RATE_DATA - SURATE) ); %URATEにいちばん近い値を配列RATE_DATAから検索
-            SURATE_CODE = num2str( dec2hex(J1) );         %要素番号をTABLE NO. (HEX CODE)にconvert
-            while length(SURATE_CODE)<2, SURATE_CODE=strcat('0', SURATE_CODE); end %無理やり0をつけて2桁にする
-
-            [~, J2] = min( abs(obj.RATE_DATA - SDRATE) ); %DRATEにいちばん近い値を配列RATE_DATAから検索
-            SDRATE_CODE = num2str( dec2hex(J2) );         %要素番号をTABLE NO. (HEX CODE)にconvert
-            while length(SDRATE_CODE)<2, SDRATE_CODE=strcat('0', SDRATE_CODE); end %無理やり0をつけて2桁にする
-
-            S = strcat( SURATE_CODE, SDRATE_CODE ); %4桁の HEX_CODE作成
-
-            obj.BWDriveData(num, 3, S);
-            obj.Wait(num, 0);
-            obj.BWDriveCommand(num, '0033');
-            %{
-            if num==0 || num==1 || num==2
-                fprintf(' SURATE(start acceleration) was changed to %.1f[ms/kHz](= %.2f[mm/s^2])\n' ...
-                        ,obj.RATE_DATA(J1), 1e6/obj.RATE_DATA(J1)/obj.Degmm2Pulse(num));
-                fprintf(' SDRATE(end   acceleration) was changed to %.1f[ms/kHz](= %.2f[mm/s^2])\n' ...
-                        ,obj.RATE_DATA(J2), 1e6/obj.RATE_DATA(J2)/obj.Degmm2Pulse(num));
-            else
-                fprintf(' SURATE(start acceleration) was changed to %.1f[ms/kHz](= %.2f[deg/s^2])\n' ...
-                        ,obj.RATE_DATA(J1), 1e6/obj.RATE_DATA(J1)/obj.Degmm2Pulse(num));
-                fprintf(' SDRATE(end   acceleration) was changed to %.1f[ms/kHz](= %.2f[deg/s^2])\n\n' ...
-                        ,obj.RATE_DATA(J2), 1e6/obj.RATE_DATA(J2)/obj.Degmm2Pulse(num));
-            end
-            %}
-        end
-        function S_DriveSet_SCAREA12(obj, num, SCAREA1, SCAREA2)
-            % S_DriveSet_SCAREA12(obj, num, SCAREA1, SCAREA2) sets the S-shape Drive Parameter SCAREA12
-            %   SCAREA1 : start of 1st S-shape [Hz]
-            %   SCAREA2 : end   of 1st S-shape [Hz]
-            if nargin~=4, error('Wrong number of input arguments') ; end
-
-            HEX_DATA1 = dec2hex( SCAREA1/50 );
-            HEX_DATA2 = dec2hex( SCAREA2/50 );
-            obj.BWDriveData(num, 2, HEX_DATA2); %SCAREA2 SET
-            obj.BWDriveData(num, 3, HEX_DATA1); %SCAREA1 SET
-            obj.Wait(num, 0);
-            obj.BWDriveCommand(num, '0034');
-            %{
-            if num==0 || num==1 || num==2
-                fprintf(' SCAREA1(s-shape speed) was changed to %.1f[Hz](= %.2f[mm/s])\n' ...
-                        , SCAREA1, SCAREA1/obj.Degmm2Pulse(num));
-                fprintf(' SCAREA2(s-shape speed) was changed to %.1f[Hz](= %.2f[mm/s])\n' ...
-                        , SCAREA2, SCAREA2/obj.Degmm2Pulse(num));
-             else
-                fprintf(' SCAREA1(s-shape speed) was changed to %.1f[Hz](= %.2f[deg/s])\n' ...
-                        , SCAREA1, SCAREA1/obj.Degmm2Pulse(num));
-                fprintf(' SCAREA2(s-shape speed) was changed to %.1f[Hz](= %.2f[deg/s])\n' ...
-                        , SCAREA2, SCAREA2/obj.Degmm2Pulse(num));
-            end
-            %}
-        end
-        function S_DriveSet_SCAREA34(obj, num, SCAREA3, SCAREA4)
-            % S_DriveSet_SCAREA34(obj, num, SCAREA3, SCAREA4) sets the S-shape Drive Parameter SCAREA43
-            %   SCAREA3 : start of 2nd S-shape [Hz]
-            %   SCAREA4 : end   of 2nd S-shape [Hz]
-            if nargin~=4, error('Wrong number of input arguments') ; end
-
-            HEX_DATA3 = dec2hex( SCAREA3/50 );
-            HEX_DATA4 = dec2hex( SCAREA4/50 );
-            obj.BWDriveData(num, 2, HEX_DATA3); %SCAREA3 SET
-            obj.BWDriveData(num, 3, HEX_DATA4); %SCAREA4 SET
-            obj.Wait(num, 0);
-            obj.BWDriveCommand(num, '0035');
-            %{
-            if num==0 || num==1 || num==2
-                fprintf(' SCAREA3(s-shape speed) was changed to %.1f[Hz](= %.2f[mm/s])\n' ...
-                        , SCAREA3, SCAREA3/obj.Degmm2Pulse(num));
-                fprintf(' SCAREA4(s-shape speed) was changed to %.1f[Hz](= %.2f[mm/s])\n' ...
-                        , SCAREA4, SCAREA4/obj.Degmm2Pulse(num));
-             else
-                fprintf(' SCAREA3(s-shape speed) was changed to %.1f[Hz](= %.2f[deg/s])\n' ...
-                        , SCAREA3, SCAREA3/obj.Degmm2Pulse(num));
-                fprintf(' SCAREA4(s-shape speed) was changed to %.1f[Hz](= %.2f[deg/s])\n' ...
-                        , SCAREA4, SCAREA4/obj.Degmm2Pulse(num));
-            end
-            %}
-        end
-        
         %////// "Drive speed parameter を設定 //////
         function L_SetDrivePara(obj, num, StartEnd_Vel, Max_Vel, Accel_1, Accel_2)
             % L_SetDrivePara(obj, num, StartEnd_Vel, Max_Vel, Accel_1, Accel_2) sets the L-shape Drive Parameters
@@ -766,48 +422,28 @@ classdef MID_CV87x < handle
             %   Max_Vel      : MAximum speed [mm/s] for X,Y,Z or [deg/s] for R,A
             %   Accel_1&2    : Start&End Acceleration [mm/s^2] for X,Y,Z or [deg/s^2] for R,A
             %   if any argument<=0, the corresponding setting will not be performed.
-            if nargin~=6, error('Wrong number of input arguments'); end
-
-            % Setting of StartEnd_Vel
-            if StartEnd_Vel>obj.Vel_Max(num)
-                fprintf( 'StartEnd_Vel is too big. Maximum limit=%d\n', obj.Vel_Max(num) ) ;
-                fprintf( 'Setting of StartEnd_Vel is cancelled\n' );
-            elseif StartEnd_Vel<=0
-                fprintf( 'Setting of StartEnd_Vel is not performed\n' );
-            else
-                LSPD = StartEnd_Vel*obj.Degmm2Pulse(num);   %convert to [Hz: Pulse/s]
-                obj.L_DriveSet_LSPD(num, LSPD);             %LSPD SET
-            end
+            assert( nargin==6, 'Wrong number of input arguments'); 
+            assertin_oc( StartEnd_Vel, 0, obj.Vel_Max(num));
+            assertin_oc( Max_Vel,      0, obj.Vel_Max(num));
+            assertin_oc( Accel_1,      0, obj.Accel_Max(num));
+            assertin_oc( Accel_2,      0, obj.Accel_Max(num));
             
-            % Setting of Max_Vel
-            if Max_Vel>obj.Vel_Max(num)
-                fprintf( 'Max_Vel is too big. Maximum limit=%d\n', obj.Vel_Max(num) );
-                fprintf( 'Setting of Max_Vel is cancelled\n' );
-            elseif Max_Vel<=0
-                fprintf( 'Setting of Max_Vel is not performed\n' );
-            else
-                HSPD = Max_Vel*obj.Degmm2Pulse(num);   %convert to [Hz: Pulse/s]
-                obj.L_DriveSet_HSPD(num, HSPD);             %HSPD SET
-            end
-            % Setting of Accel_1&2
-            if Accel_1>obj.Accel_Max(num) || Accel_2>obj.Accel_Max(num)
-                fprintf( 'Accel_1 or 2 is too big. Maximum limit=%d\n', obj.Accel_Max(num) );
-                fprintf( 'Setting of Accel_1 & 2 is cancelled\n' );
-            elseif Accel_1<=0 && Accel_2<=0;
-                fprintf( 'Setting of Accel_1 & 2 is not performed\n' );
-            else
-                if Accel_1<=0 %どちらかが0のときは他方と同じにする。(バグ回避)
-                    DRATE = 1e6/( Accel_2*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                    URATE = DRATE;    
-                elseif Accel_2<=0
-                    URATE = 1e6/( Accel_1*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                    DRATE = URATE;
-                else
-                    URATE = 1e6/( Accel_1*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                    DRATE = 1e6/( Accel_2*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                end
-                obj.L_DriveSet_UDRATE(num, URATE, DRATE); %URATE&DRATE SET
-            end
+            LSPD = int32(StartEnd_Vel*obj.Degmm2Pulse(num));   %convert to [Hz: Pulse/s]
+            HSPD = Max_Vel*obj.Degmm2Pulse(num);   %convert to [Hz: Pulse/s]
+            URATE = 1e6/( Accel_1*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
+            DRATE = 1e6/( Accel_2*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
+            urateCode = obj.rate2TableNo(URATE);          %rateをTABLE NO.に変換 
+            drateCode = obj.rate2TableNo(DRATE);          %rateをTABLE NO.に変換
+            
+            % LSPD_SET
+            dataarray = setdata1_24( LSPD );
+            obj.writeMC06(num, 'drive', obj.LSPD_SET, dataarray, [2, 3]);
+            % HSPD_SET
+            dataarray = setdata1_24( HSPD );
+            obj.writeMC06(num, 'drive', obj.HSPD_SET, dataarray, [2, 3]);
+            % RATE_SET
+            dataarray = setdata_two8( urateCode, drateCode );
+            obj.writeMC06(num, 'drive', obj.RATE_SET, dataarray, 3);
         end
         function S_SetDrivePara(obj, num, StartEnd_Vel, Max_Vel, Accel_1, Accel_2, S_Vel1, S_Vel2, S_Vel3, S_Vel4)
             %S_SetDrivePara(obj, num, StartEnd_Vel, Max_Vel, Accel_1, Accel_2, S_Vel1, S_Vel2, S_Vel3, S_Vel4) sets the S-shape Drive Parameters
@@ -818,302 +454,549 @@ classdef MID_CV87x < handle
             %   Accel_2      : End   Acceleration [mm/s^2] or [deg/s^2]
             %   S_Vel1~4     : velocity of S-shape range [mm/s^2] or [deg/s^2]
             %   if any argument<=0, the corresponding setting will not be performed.
-            if nargin~=10, error('Wrong number of input arguments') ; end
+            assert( nargin==10, 'Wrong number of input arguments') ;
+            assertin_oc( [StartEnd_Vel, Max_Vel, S_Vel1, S_Vel2, S_Vel3, S_Vel4], 0, obj.Vel_Max(num));
+            assertin_oc( [Accel_1, Accel_2],      0, obj.Accel_Max(num));
+            
+            SLSPD = StartEnd_Vel*obj.Degmm2Pulse(num);  % Setting of StartEnd_Vel:convert to [Hz: Pulse/s]
+            SHSPD = Max_Vel*obj.Degmm2Pulse(num);       % Setting of Max_Vel:convert to [Hz: Pulse/s]
+            SURATE = 1e6/( Accel_1*obj.Degmm2Pulse(num) ); %Setting of Accel_1: convert to [ms/kHz]
+            SDRATE = 1e6/( Accel_2*obj.Degmm2Pulse(num) ); %Setting of Accel_1: convert to [ms/kHz]
+            surateCode = obj.rate2TableNo(SURATE);          %rateをTABLE NO.に変換 
+            sdrateCode = obj.rate2TableNo(SDRATE);          %rateをTABLE NO.に変換
+            
+            SCAREA1 = 1e6/( S_Vel1*obj.Degmm2Pulse(num) ); % Setting of S字部分の速度最初の2箇所(SCAREA1): convert to [ms/kHz]
+            SCAREA2 = 1e6/( S_Vel2*obj.Degmm2Pulse(num) ); % Setting of S字部分の速度最初の2箇所(SCAREA2):convert to [ms/kHz]
+            SCAREA3 = 1e6/( S_Vel3*obj.Degmm2Pulse(num) ); % Setting of S字部分の速度後の2箇所(SCAREA3):convert to [ms/kHz]
+            SCAREA4 = 1e6/( S_Vel4*obj.Degmm2Pulse(num) ); % Setting of S字部分の速度後の2箇所(SCAREA4):convert to [ms/kHz]
+            assertin( [SCAREA1 SCAREA2 SCAREA3 SCAREA4], 0, 3276750 ); %コード上の限界（下のscarea1Codeなどが0xFFFF = 65535以内でないといけない）
+            scarea1Code = uint16(SCAREA1/50);  % setting data = frequency / 50;  see p26 in the manual(command part)
+            scarea2Code = uint16(SCAREA2/50);  % setting data = frequency / 50;  see p26 in the manual(command part)
+            scarea3Code = uint16(SCAREA3/50);  % setting data = frequency / 50;  see p26 in the manual(command part)
+            scarea4Code = uint16(SCAREA4/50);  % setting data = frequency / 50;  see p26 in the manual(command part)
             
             % Setting of StartEnd_Vel
-            if StartEnd_Vel>obj.Vel_Max(num)
-                fprintf( 'StartEnd_Vel is too big. Maximum limit=%d\n', obj.Vel_Max(num) ) ;
-                fprintf( 'Setting of StartEnd_Vel is cancelled\n' );
-            elseif StartEnd_Vel<=0
-                fprintf( 'Setting of StartEnd_Vel is not performed\n' );
-            else
-                SLSPD = StartEnd_Vel*obj.Degmm2Pulse(num);  %convert to [Hz: Pulse/s]
-                obj.S_DriveSet_SLSPD(num, SLSPD);           %SLSPD SET
-            end
-            
+            dataarray = setdata1_24( SLSPD );
+            obj.writeMC06(num, 'drive', obj.SLSPD_SET, dataarray, [2, 3]);
             % Setting of Max_Vel
-            if Max_Vel>obj.Vel_Max(num)
-                fprintf( 'Max_Vel is too big. Maximum limit=%d\n', obj.Vel_Max(num) );
-                fprintf( 'Setting of Max_Vel is cancelled\n' );
-            elseif Max_Vel<=0
-                fprintf( 'Setting of Max_Vel is not performed\n' );
-            else
-                SHSPD = Max_Vel*obj.Degmm2Pulse(num);        %convert to [Hz: Pulse/s]
-                obj.S_DriveSet_SHSPD(num, SHSPD);            %SHSPD SET
-            end
-
+            dataarray = setdata1_24( SHSPD );
+            obj.writeMC06(num, 'drive', obj.SHSPD_SET, dataarray, [2, 3]);
             % Setting of Accel_1&2
-            if Accel_1>obj.Accel_Max(num) || Accel_2>obj.Accel_Max(num)
-                fprintf( 'Accel_1 or 2 is too big. Maximum limit=%d\n', obj.Accel_Max(num) );
-                fprintf( 'Setting of Accel_1&2is cancelled\n' );
-            elseif Accel_1<=0 && Accel_2<=0;
-                fprintf( 'Setting of Accel_1&2 is not performed\n' );
-            else
-                if Accel_1<=0 %どちらかが0のときは他方と同じにする。(バグ回避)
-                    SDRATE = 1e6/( Accel_2*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                    SURATE = SDRATE;    
-                elseif Accel_2<=0
-                    SURATE = 1e6/( Accel_1*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                    SDRATE = SURATE;
-                else
-                    SURATE = 1e6/( Accel_1*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                    SDRATE = 1e6/( Accel_2*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                end
-                obj.S_DriveSet_SUDRATE(num, SURATE, SDRATE); %SURATE & SDRATE SET
-            end
-
-             % Setting of S字部分の速度最初の2箇所(SCAREA1 & SCAREA2)
-            if S_Vel1>obj.Vel_Max(num) || S_Vel2>obj.Vel_Max(num)
-                fprintf( 'S_Vel 1 or 2 is too big. Maximum limit=%d\n', obj.Vel_Max(num) );
-                fprintf( 'Setting of SCAREA_1 & 2 is cancelled\n' );
-            elseif S_Vel1<=0 && S_Vel2<=0;
-                fprintf( 'Setting of SCAREA_1 & 2 is not performed\n' );
-            else
-                if S_Vel1<=0 %どちらかが0のときは他方と同じにする。(バグ回避)
-                    SCAREA2 = 1e6/( S_Vel2*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                    SCAREA1 = SCAREA2;
-                elseif S_Vel2<=0
-                    SCAREA1 = 1e6/( S_Vel1*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                    SCAREA2 = SCAREA1;
-                else
-                    SCAREA1 = 1e6/( S_Vel1*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                    SCAREA2 = 1e6/( S_Vel2*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                end
-                obj.S_DriveSet_SCAREA12(num, SCAREA1, SCAREA2); %SCAREA1 & SCAREA2 SET
-            end           
-
-             % Setting of S字部分の速度最初の2箇所(SCAREA3 & SCAREA4)
-            if S_Vel3>obj.Vel_Max(num) || S_Vel4>obj.Vel_Max(num)
-                fprintf( 'S_Vel 3 or 4 is too big. Maximum limit=%d\n', obj.Vel_Max(num) );
-                fprintf( 'Setting of SCAREA_3 & 4 is cancelled\n' );
-            elseif S_Vel3<=0 && S_Vel4<=0;
-                fprintf( 'Setting of SCAREA_3 & 4 is not performed\n' );
-            else
-                if S_Vel3<=0 %どちらかが0のときは他方と同じにする。(バグ回避)
-                    SCAREA4 = 1e6/( S_Vel4*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                    SCAREA3 = SCAREA4;
-                elseif S_Vel4<=0
-                    SCAREA3 = 1e6/( S_Vel3*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                    SCAREA4 = SCAREA3;
-                else
-                    SCAREA3 = 1e6/( S_Vel3*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                    SCAREA4 = 1e6/( S_Vel4*obj.Degmm2Pulse(num) ); %convert to [ms/kHz]
-                end
-                obj.S_DriveSet_SCAREA34(num, SCAREA3, SCAREA4); %SCAREA3 & SCAREA4 SET
-            end           
+            dataarray = setdata_two8( surateCode, sdrateCode );
+            obj.writeMC06(num, 'drive', obj.SRATE_SET, dataarray, 3);
+            % Setting of S字部分の速度最初の2箇所(SCAREA1 & SCAREA2)
+            dataarray(2) = scarea2Code; %DATA2がSCAREA2, DATA3がSCAREA1 の順で間違いない。コマンド編マニュアルp26参照
+            dataarray(3) = scarea1Code;
+            obj.writeMC06(num, 'drive', obj.SCAREA12_SET, dataarray, [2 3])
+            % Setting of S字部分のあとの速度2箇所(SCAREA3 & SCAREA4)
+            dataarray(2) = scarea3Code;
+            dataarray(3) = scarea4Code;
+            obj.writeMC06(num, 'drive', obj.SCAREA34_SET, dataarray, [2 3])
         end
-        %////// "Drive speedを 低.中.高 の3段階で設定"で使用//////
-        function L_SetDriveSpeed(obj, num, Speed)
-            % L_SetDriveSpeed(obj, num, Speed) sets the L-shape Drive speed
-            % Speed: 'slow', 'medium', 'fast'
-            if nargin~=3, error('Wrong number of input arguments') ; end
-
-            switch lower(Speed)
-                case 'slow'  % Max_Vel以外は初期値を使用
-                    obj.L_SetDrivePara(num, obj.Ini_Ldrive_data(num,1), obj.Vel_3level(num,1), obj.Ini_Ldrive_data(num,3), obj.Ini_Ldrive_data(num,4));
-        %            fprintf( ' ''L'' Drive %d Speed is set to ''slow''\n',num );
-                case 'medium'
-                    obj.L_SetDrivePara(num, obj.Ini_Ldrive_data(num,1), obj.Vel_3level(num,2), obj.Ini_Ldrive_data(num,3), obj.Ini_Ldrive_data(num,4));
-        %            fprintf( ' ''L'' Drive %d Speed is set to ''medium''\n',num );
-                case 'fast'
-                    obj.L_SetDrivePara(num, obj.Ini_Ldrive_data(num,1), obj.Vel_3level(num,3), obj.Ini_Ldrive_data(num,3), obj.Ini_Ldrive_data(num,4));
-        %            fprintf( ' ''L'' Drive %d Speed is set to ''fast''\n',num );
-                otherwise
-                    fprintf( ' ''Speed'' has to be ''slow'', ''medium'', or ''fast''\n' );
-                    fprintf( 'L_SetDriveSpeed is cancelled\n' );
-            end
-        end
-        function S_SetDriveSpeed(obj, num, Speed)
-            % S_SetDriveSpeed(obj, num, Speed) sets the S-shape Drive speed
-            % Speed: 'slow', 'medium', 'fast'
-            if nargin~=3, error('Wrong number of input arguments') ; end
-
-            switch lower(Speed)
-                case 'slow'  % Max_Vel以外は初期値を使用
-                    %obj.S_SetDrivePara(num, obj.Ini_Sdrive_data(num,1), obj.Vel_3level(num,1), obj.Ini_Sdrive_data(num,3:8));
-                    obj.S_SetDrivePara( num, obj.Ini_Sdrive_data(num,1), obj.Vel_3level(num,1), obj.Ini_Sdrive_data(num,3), ...
-                                            obj.Ini_Sdrive_data(num,4), obj.Ini_Sdrive_data(num,5), obj.Ini_Sdrive_data(num,6), ...
-                                            obj.Ini_Sdrive_data(num,7), obj.Ini_Sdrive_data(num,8) );
-         %           fprintf( ' ''S'' Drive %d Speed is set to ''slow''\n',num );
-                case 'medium'
-                    obj.S_SetDrivePara(num, obj.Ini_Sdrive_data(num,1), obj.Vel_3level(num,2), obj.Ini_Sdrive_data(num,3), ...
-                                            obj.Ini_Sdrive_data(num,4), obj.Ini_Sdrive_data(num,5), obj.Ini_Sdrive_data(num,6), ...
-                                            obj.Ini_Sdrive_data(num,7), obj.Ini_Sdrive_data(num,8) );
-         %           fprintf( ' ''S'' Drive %d Speed is set to ''medium''\n',num );
-                case 'fast'
-                    obj.S_SetDrivePara(num, obj.Ini_Sdrive_data(num,1), obj.Vel_3level(num,3), obj.Ini_Sdrive_data(num,3), ...
-                                            obj.Ini_Sdrive_data(num,4), obj.Ini_Sdrive_data(num,5), obj.Ini_Sdrive_data(num,6), ...
-                                            obj.Ini_Sdrive_data(num,7), obj.Ini_Sdrive_data(num,8) );
-         %           fprintf( ' ''S'' Drive %d Speed is set to ''fast''\n',num );
-                otherwise
-                    fprintf( '''Speed'' has to be ''slow'', ''medium'', or ''fast''\n' );
-                    fprintf( 'S_SetDriveSpeed is cancelled\n' );
-            end
-        end
-
         %////// 各種データの読み出しで使用 //////
         function LDriveParameter(obj, num)
             %LDriveParameter(obj, num) outputs the current L Drive Parameters
             fprintf( '\n///// Parameters for Linear Drive /////\n' );
-            obj.DataRead(num, '0010'); %LSPD SET
-            fprintf(' LSPD(Start Pulse Speed) = %d[Hz]\n', obj.GetData(num));
-            obj.DataRead(num, '0011'); %HSPD SET
-            fprintf(' HSPD(Maximum Pulse Speed) = %d[Hz]\n', obj.GetData(num));
-            obj.DataRead(num, '0013'); %RATE SET
-            S = num2str( dec2hex( obj.sData(num).MC06_Data(3) ) );
-            while length(S)<4, S=strcat('0',S); end %無理やり0をつけて4桁にする
-          % fprintf(' URATE(start acceleration): Table NO. %s\n', S(1:2));
-          % fprintf(' DRATE(end   acceleration): Table NO. %s\n', S(3:4));
-            fprintf(' URATE(start acceleration): %d[ms/kHz]\n',obj.RATE_DATA_TABLE(S(1:2)));
-            fprintf(' DRATE(end   acceleration): %d[ms/kHz]\n',obj.RATE_DATA_TABLE(S(3:4)));
+            dataarr = obj.readSetData(num, obj.LSPD_SET ); %LSPD SET
+            fprintf(' LSPD(Start Pulse Speed) = %d[Hz]\n', getdata(dataarr, 'uint32'));
+            dataarr = obj.readSetData(num, obj.HSPD_SET ); %HSPD SET
+            fprintf(' HSPD(Maximum Pulse Speed) = %d[Hz]\n', getdata(dataarr, 'uint32'));
+            dataarr = obj.readSetData(num, obj.RATE_SET); %RATE SET
+            [urate_code, drate_code ] = getdata_two8( dataarr, 'uint8');
+%             fprintf(' URATE(start acceleration): Table NO. %d\n', urate_code);
+%             fprintf(' DRATE(end   acceleration): Table NO. %d\n', drate_code);
+            fprintf(' URATE(start acceleration): %d[ms/kHz]\n',obj.tableNo2Rate(urate_code));
+            fprintf(' DRATE(end   acceleration): %d[ms/kHz]\n',obj.tableNo2Rate(drate_code));
         end
         function SDriveParameter(obj, num)
             %SDriveParameter(obj, num) outputs the current SDrive Parameters
             fprintf( '\n///// Parameters for S-shape Drive /////\n' );
-            obj.DataRead(num, '0030'); %SLSPD SET
-            fprintf(' SLSPD(Start Pulse Speed) = %d[Hz]\n', obj.GetData(num));
-            obj.DataRead(num, '0031'); %SHSPD SET
-            fprintf(' SHSPD(Maximum Pulse Speed) = %d[Hz]\n', obj.GetData(num));
-            obj.DataRead(num, '0033'); %SRATE SET
-            S = num2str( dec2hex( obj.sData(num).MC06_Data(3) ) );
-            while length(S)<4, S=strcat('0',S); end %無理やり0をつけて4桁にする
-           %fprintf(' SURATE(start acceleration): Table NO. %s\n', S(1:2));
-           %fprintf(' SDRATE(end   acceleration): Table NO. %s\n', S(3:4));
-            fprintf(' SURATE(start acceleration): %d[ms/kHz]\n',obj.RATE_DATA_TABLE(S(1:2)));
-            fprintf(' SDRATE(end   acceleration): %d[ms/kHz]\n',obj.RATE_DATA_TABLE(S(3:4)));
-            obj.DataRead(num, '0034'); %SCAREA12 SET
-            fprintf(' SCAREA1 = %d[Hz]\n', obj.sData(num).MC06_Data(3)*50);
-            fprintf(' SCAREA2 = %d[Hz]\n', obj.sData(num).MC06_Data(2)*50);
-            obj.DataRead('0035'); %SCAREA34 SET
-            fprintf(' SCAREA3 = %d[Hz]\n', obj.sData(num).MC06_Data(2)*50);
-            fprintf(' SCAREA4 = %d[Hz]\n', obj.sData(num).MC06_Data(3)*50);
-        end   
-        function DataRead(obj, num, HEX_CODE)
-            %DataRead(obj, num, HEX_CODE) reads the data on DRIVE DATA PORT
-            %取説(コマンド編) P.71参照
-            obj.Wait(num, 0);
-            obj.BWDriveData(num, 3, HEX_CODE); %Command code(LSPD SET)
-            obj.BWDriveCommand(num, '0089'); %HEX CODE (SET DATA READ)
-            obj.Wait(num, 0);
-            obj.BWDriveCommand(num, 'F041'); %HEX CODE (DATA READ PORT SELECT)
-            obj.IRDrive(num);
-%           obj.sData.MC06_Data
-%           pData = obj.GetData
-        end
-        function Rate = RATE_DATA_TABLE(obj, Table_number)
-            %取説 P.49(4)参照
-            if nargin~=2, error('Wrong number of input arguments') ; end
-            if hex2dec(Table_number)>60
-                error('Table_number has to be 00~3C');
-            elseif hex2dec(Table_number)==0
-                Rate = 1000; %RATE_DATA配列は要素番号0を持てないのでこれだけ例外で考える.
-            else
-                Rate = obj.RATE_DATA( hex2dec(Table_number) );
-            end
+            dataarr = obj.readSetData(num, obj.SLSPD_SET ); %SLSPD SET
+            fprintf(' SLSPD(Start Pulse Speed) = %d[Hz]\n', getdata(dataarr, 'uint32'));
+            dataarr = obj.readSetData(num, obj.SHSPD_SET ); %SHSPD SET
+            fprintf(' SHSPD(Maximum Pulse Speed) = %d[Hz]\n', getdata(dataarr, 'uint32'));
+            dataarr = obj.readSetData(num, obj.SRATE_SET); %SRATE SET
+            [surate_code, sdrate_code ] = getdata_two8( dataarr, 'uint8');
+%             fprintf(' SURATE(start acceleration): Table NO. %d\n', surate_code);
+%             fprintf(' SDRATE(end   acceleration): Table NO. %d\n', sdrate_code);
+            fprintf(' SURATE(start acceleration): %d[ms/kHz]\n',obj.tableNo2Rate(surate_code));
+            fprintf(' SDRATE(end   acceleration): %d[ms/kHz]\n',obj.tableNo2Rate(sdrate_code));
+            dataarr = obj.readSetData(num, obj.SCAREA12_SET); %SCAREA12 SET
+            fprintf(' SCAREA1 = %d[Hz]\n', dataarr(3)*50);
+            fprintf(' SCAREA2 = %d[Hz]\n', dataarr(2)*50);
+            dataarr = obj.readSetData(num, obj.SCAREA34_SET); %SCAREA34 SET
+            fprintf(' SCAREA3 = %d[Hz]\n', dataarr(2)*50);
+            fprintf(' SCAREA4 = %d[Hz]\n', dataarr(3)*50);
         end
         
-        %////// SCAN DRIVE /////
-        function Jog_minus(obj, num)
-            % Jog_minus(obj, num) excutes -JOG Drive (only 1 pulse)
-            if nargin~=2, error('Wrong number of input arguments') ; end
-            obj.Wait(num, 0);
-            obj.BWDriveCommand(num, '0020');
+        function [dataarray] = readSetData(obj, devNum, command_code)
+            %readSetData(obj, num, HEX_CODE) reads the data on DRIVE DATA PORT
+            %取説(コマンド編) P.71参照
+            arguments
+                obj
+                devNum
+                command_code uint16
+            end
+            result = struct('MC06_Result', zeros(1,4, 'uint16'));
+            resultPtr = libpointer( 'MC06_TAG_S_RESULT', result );
+            dataPtr = libpointer('uint16Ptr', command_code);
+            [retVal, ~, result] = calllib('Mc06A', 'MC06_BWDriveData3', obj.hDev(devNum), dataPtr, resultPtr);
+            obj.assertionMC06(retVal, result); % call error function
+            
+            command1 = obj.SET_DATA_READ;
+            cmdPtr = libpointer('uint16Ptr', command1);
+            [retVal, ~, result] = calllib('Mc06A', 'MC06_BWDriveCommand', obj.hDev(devNum), cmdPtr, resultPtr);
+            obj.assertionMC06(retVal, result); % call error function
+
+            obj.Wait(devNum, 0);
+            
+            command2 = obj.DATA_READ_PORT_SELECT;
+            
+            dataarray = obj.readMC06( devNum, command2 );
+            
         end
-        function Jog_plus(obj, num)
-            % Jog_plus(obj, num) excutes +JOG Drive (only 1 pulse)
-            if nargin~=2, error('Wrong number of input arguments') ; end
-            obj.Wait(num, 0);
-            obj.BWDriveCommand(num, '0021');
-        end        
-        function L_Scan_minus(obj, num)
-            % L_Scan_minus(obj, num) excutes - L-shaped SCAN
-            %   This is the endless drive, so you have to stop the drive by yourself.
-            if nargin~=2, error('Wrong number of input arguments') ; end
-            obj.Wait(num, 0);
-            obj.BWDriveCommand(num, '0022');
-        end        
-        function L_Scan_plus(obj, num)
-            % L_Scan_plus(obj, num) excutes + L-shaped SCAN
-            %   This is the endless drive, so you have to stop the drive by yourself.
-            if nargin~=2, error('Wrong number of input arguments') ; end
-            obj.Wait(num, 0);
-            obj.BWDriveCommand(num, '0023');
+        function tableNo = rate2TableNo(obj, rate )
+             [~, idx] = min( abs(obj.RATE_DATA_TABLE_Rate - rate) ); %rateにいちばん近い値を配列RATE_DATA_Table_Rateから検索
+             tableNo = obj.RATE_DATA_TABLE_No(idx);
         end
-        function L_IncDrive(obj, num, Degmm)
-            %L_IncDrive(obj, num, Degmm) excutes the relative L-shaped drive
-            %   Degmm : degree or mm
-            if nargin~=3, error('Wrong number of input arguments') ; end
-            if abs(Degmm)>obj.Move_Limit(num), error('Movement %d is too big: ',Degmm); end %事故防止:移動量はMove_Limit以内に限定
-
-            pulse_num = uint32( abs(Degmm)*obj.Degmm2Pulse(num) ); %Number of pulses
-            if Degmm>0  %Scan装置記載の符号と整合させるためわざと逆転させている
-                pulse_num = bitcmp( pulse_num, 'uint32' ); %負数は2の補数で与える
-            end
-            
-            obj.SetData1(num, pulse_num);
-            obj.Wait(num, 0);
-            obj.IWDrive(num, '0024');
-        end        
-        function L_AbsDrive(obj, num, Degmm)
-            %L_AbsDrive(obj, num, Degmm) excutes the absolute L-shaped drive
-            %   Degmm : degree or mm
-            if nargin~=3, error('Wrong number of input arguments') ; end
-            if abs(Degmm)>obj.Move_Limit(num), error('Movement %d is too big: ',Degmm); end %事故防止:移動量はMove_Limit以内に限定
-
-            pulse_num = uint32( abs(Degmm)*obj.Degmm2Pulse(num) ); %Number of pulses
-            if Degmm>0
-                pulse_num = bitcmp( pulse_num, 'uint32' ); %負数は2の補数で与える
-            end
-            
-            obj.SetData1(num, pulse_num);
-            obj.Wait(num, 0);
-            obj.IWDrive(num, '0025');
+        function rate = tableNo2Rate(obj, tableNo )
+             rate = obj.RATE_DATA_TABLE_Rate(tableNo + 1);
         end
-        function S_Scan_minus(obj, num)
-            % S_Scan_minus(obj, num) excutes - S-shaped SCAN
-            %   This is the endless drive, so you have to stop the drive by yourself.
-            if nargin~=2, error('Wrong number of input arguments') ; end
-            obj.Wait(num, 0);
-            obj.BWDriveCommand(num, '0042');
-        end        
-        function S_Scan_plus(obj, num)
-            % S_Scan_plus(obj, num) excutes + S-shaped SCAN
-            %   This is the endless drive, so you have to stop the drive by yourself.
-            if nargin~=2, error('Wrong number of input arguments') ; end
-            obj.Wait(num, 0);
-            obj.BWDriveCommand(num, '0043');
-        end        
-        function S_IncDrive(obj, num, Degmm)
-            %S_IncDrive(obj, num, Degmm) excutes the relative S-shaped drive
-            %   Degmm : degree or mm
-            if nargin~=3, error('Wrong number of input arguments') ; end
-            if abs(Degmm)>obj.Move_Limit(num), error('Movement %d is too big: ',Degmm); end %事故防止:移動量はMove_Limit以内に限定
+        
+    end
+    properties(Constant)
+        % MCC06 general DRIVE COMMAND
+        NO_OPERATION = 0x0000;
+        SPEC_INITIALIZE1 = 0x0001;
+        SPEC_INITIALIZE2 = 0x0002;
+        SPEC_INITIALIZE3 = 0x0003;
+        DRIVE_DELAY_SET = 0x0007;
+        CW_SOFT_LIMIT_SET = 0x0008;
+        CCW_SOFT_LIMIT_SET = 0x0009;
+        LSPD_SET = 0x0010;
+        HSPD_SET = 0x0011;
+        ELSPD_SET = 0x0012;
+        RATE_SET = 0x0013;
+        END_PULSE_SET = 0x0018;
+        ESPD_SET = 0x0019;
+        ESPD_DELAY_SET = 0x001A;
+        RATE_DATA_SET = 0x001E;
+        DOWN_POINT_SET = 0x001F;
+        PLUSJOG = 0x0020;
+        MINUSJOG = 0x0021;
+        PLUSSCAN = 0x0022;
+        MINUSSCAN = 0x0023;
+        INC_INDEX = 0x0024;
+        ABS_INDEX = 0x0025;
+        SLSPD_SET = 0x0030;
+        SHSPD_SET = 0x0031;
+        SELSPD_SET = 0x0032;
+        SRATE_SET = 0x0033;
+        SCAREA12_SET = 0x0034;
+        SCAREA34_SET = 0x0035;
+        SEND_PULSE_SET = 0x0038;
+        SESPD_SET = 0x0039;
+        SESPD_DELAY_SET = 0x003A;
+        SRATE_DATA_SET = 0x003E;
+        SRATE_DOWN_POINT = 0x003F;
+        PLUS_SRATE_SCAN = 0x0042;
+        MINUS_SRATE_SCAN = 0x0043;
+        INC_SRATE_INDEX = 0x0044;
+        ABS_SRATE_INDEX = 0x0045;
+        ORIGIN_SPEC_SET_ORIGIN = 0x0060;
+        ORIGIN_CSPD_SET_CONSTANT_SCAN = 0x0061;
+        ORIGIN_DELAY_SET = 0x0062;
+        ORIGIN_OFFSET_PULSE_SET = 0x0063;
+        ORIGIN_CSCAN_ERROR_PULSE_SET_CONSTANT_SCAN = 0x0064;
+        ORIGIN_JOG_ERROR_PULSE_SET_JOG = 0x0065;
+        ORIGIN_PRESET_PULSE_SET_PRESET_ORIGIN = 0x0068;
+        ORIGIN = 0x0070;
+        SRATE_ORIGIN = 0x0071;
+        PRESET_ORIGIN = 0x0074;
+        SRATE_PRESET_ORIGIN = 0x0075;
+        STBY_SPEC_SET_STBY = 0x0080;
+        SERVO_SPEC_SET = 0x0082;
+        DEND_TIME_SET_DEND = 0x0083;
+        ERROR_STATUS_READ = 0x0088;
+        SET_DATA_READ = 0x0089;
+        PLUS_SENSOR_SCAN1 = 0x0090;
+        MINUS_SENSOR_SCAN1 = 0x0091;
+        SENSOR_INDEX1 = 0x0094;
+        SENSOR_INDEX2 = 0x0095;
+        SENSOR_INDEX3 = 0x0096;
+        PLUS_SRATE_SENSOR_SCAN1 = 0x0098;
+        MINUS_SRATE_SENSOR_SCAN1 = 0x0099;
+        SRATE_SENSOR_INDEX1 = 0x009C;
+        SRATE_SENSOR_INDEX2 = 0x009D;
+        SRATE_SENSOR_INDEX3 = 0x009E;
+        CHANGE_POINT_SET = 0x00B0;
+        CHANGE_DATA_SET = 0x00B1;
+        AUTO_CHANGE_DRIVE_SET = 0x00B7;
+        PLUS_AUTO_CHANGE_SCAN = 0x00B8;
+        MINUS_AUTO_CHANGE_SCAN = 0x00B9;
+        AUTO_CHANGE_INC_INDEX = 0x00BA;
+        AUTO_CHANGE_ABS_INDEX = 0x00BB;
+        CENTER_POSITION_SET = 0x0100;
+        PASS_POSITOIN_SET = 0x0101;
+        CP_SPEC_SET = 0x010F;
+        ABS_STRAIGHT_CP = 0x0110;
+        ABS_SRATE_STRAIGHT_CP = 0x0111;
+        ABS_STRAIGHT_CONST_CP = 0x0112;
+        ABS_SRATE_STRAIGHT_CONST_CP = 0x0113;
+        PLUS_ABS_CIRCULAR_CP = 0x0120;
+        MINUS_ABS_CIRCULAR_CP = 0x0121;
+        PLUS_ABS_SRATE_CIRCULAR_CP = 0x0122;
+        MINUS_ABS_SRATE_CIRCULAR_CP = 0x0123;
+        PLUS_ABS_CIRCULAR_CONST_CP = 0x0124;
+        MINUS_ABS_CIRCULAR_CONST_CP = 0x0125;
+        PLUS_ABS_SRATE_CIRCULAR_CONST_CP = 0x0126;
+        MINUS_ABS_SRATE_CIRCULAR_CONST_CP = 0x0127;
+        ABS_CIRCULAR2_CP = 0x0130;
+        ABS_SRATE_CIRCULAR2_CP = 0x0131;
+        ABS_CIRCULAR2_CONST_CP = 0x0132;
+        ABS_SRATE_CIRCULAR2_CONST_CP = 0x0133;
+        ABS_CIRCULAR3_CP = 0x0138;
+        ABS_SRATE_CIRCULAR3_CP = 0x0139;
+        ABS_CIRCULAR3_CONST_CP = 0x013A;
+        ABS_SRATE_CIRCULAR3_CONST_CP = 0x013B;
+        INC_STRAIGHT_CP = 0x0150;
+        INC_SRATE_STRAIGHT_CP = 0x0151;
+        INC_STRAIGHT_CONST_CP = 0x0152;
+        INC_SRATE_STRAIGHT_CONST_CP = 0x0153;
+        PLUS_INC_CIRCULAR_CP = 0x0160;
+        MINUS_INC_CIRCULAR_CP = 0x0161;
+        PLUS_INC_SRATE_CIRCULAR_CP = 0x0162;
+        MINUS_INC_SRATE_CIRCULAR_CP = 0x0163;
+        PLUS_INC_CIRCULAR_CONST_CP = 0x0164;
+        MINUS_INC_CIRCULAR_CONST_CP = 0x0165;
+        PLUS_INC_SRATE_CIRCULAR_CONST_CP = 0x0166;
+        MINUS_INC_SRATE_CIRCULAR_CONST_CP = 0x0167;
+        INC_CIRCULAR2_CP = 0x0170;
+        INC_SRATE_CIRCULAR2_CP = 0x0171;
+        INC_CIRCULAR2_CONST_CP = 0x0172;
+        INC_SRATE_CIRCULAR2_CONST_CP = 0x0173;
+        INC_CIRCULAR3_CP = 0x0178;
+        INC_SRATE_CIRCULAR3_CP = 0x0179;
+        INC_CIRCULAR3_CONST_CP = 0x017A;
+        INC_SRATE_CIRCULAR3_CONST_CP = 0x017B;
+        MULTICHIP_STRAIGHT_CP = 0x0190;
+        MULTICHIP_SRATE_STRAIGHT_CP = 0x0191;
+        PLUS_MULTICHIP_CIRCULAR_CP = 0x01A0;
+        MINUS_MULTICHIP_CIRCULAR_CP = 0x01A1;
+        PLUS_MULTICHIP_SRATE_CIRCULAR_CP = 0x01A2;
+        MINUS_MULTICHIP_SRATE_CIRCULAR_CP = 0x01A3;
+        PLUS_MULTICHIP_CIRCULAR_CONST_CP = 0x01A4;
+        MINUS_MULTICHIP_CIRCULAR_CONST_CP = 0x01A5;
+        PLUS_MULTICHIP_SRATE_CIRCULAR_CONST_CP = 0x01A6;
+        MINUS_MULTICHIP_SRATE_CIRCULAR_CONST_CP = 0x01A7;
+        
+        %MCC06 special DRIVE COMMAND
+        HARD_INITIALIZE1 = 0xF001;
+        HARD_INITIALIZE2 = 0xF006;
+        HARD_INITIALIZE6 = 0xF006;
+        HARD_INITIALIZE7 = 0xF007;
+        SIGNAL_OUT = 0xF00C;
+        DRST = 0xF00D;
+        SLOW_STOP = 0xF00E;
+        FAST_STOP = 0xF00F;
+        ADDRESS_COUNTER_INITIALIZE1 = 0xF010;
+        ADDRESS_COUNTER_INITIALIZE2 = 0xF011;
+        ADDRESS_COUNTER_INITIALIZE3 = 0xF012;
+        PULSE_COUNTER_INITIALIZE1 = 0xF014;
+        PULSE_COUNTER_INITIALIZE2 = 0xF015;
+        PULSE_COUNTER_INITIALIZE3 = 0xF016;
+        DFL_COUNTER_INITIALIZE1 = 0xF018;
+        DFL_COUNTER_INITIALIZE2 = 0xF019;
+        DFL_COUNTER_INITIALIZE3 = 0xF01A;
+        SPEED_COUNTER_INITIALIZE1 = 0xF01C;
+        SPEED_COUNTER_INITIALIZE2 = 0xF01D;
+        SPEED_COUNTER_INITIALIZE3 = 0xF01E;
+        INT_FACTOR_CLR = 0xF020;
+        INT_FACTOR_MASK = 0xF021;
+        COUNTER_COMP_MASK = 0xF023;
+        COUNT_LATCH_SPEC_SET = 0xF028;
+        UDC_SPEC_SET = 0xF030;
+        SPEED_CHANGE_SPEC_SET = 0xF031;
+        INDEX_CHANGE_SPEC_SET = 0xF033;
+        UP_DRIVE = 0xF034;
+        DOWN_DRIVE = 0xF035;
+        CONST_DRIVE = 0xF036;
+        SPEED_CHANGE = 0xF038;
+        RATE_CHANGE = 0xF03A;
+        INC_INDEX_CHANGE = 0xF03C;
+        ABS_INDEX_CHANGE = 0xF03D;
+        PLS_INDEX_CHANGE = 0xF03E;
+        MCC_SPEED_PORT_SELECT = 0xF040;
+        DATA_READ_PORT_SELECT = 0xF041;
+        ADDRESS_COUNTER_PORT_SELECT = 0xF048;
+        PULSE_COUNTER_PORT_SELECT = 0xF049;
+        DFL_COUNTER_PORT_SELECT = 0xF04A;
+        SPEED_COUNTER_PORT_SELECT = 0xF04B;
+        ADDRESS_LATCH_DATA_PORT_SELECT = 0xF04C;
+        PULSE_LATCH_DATA_PORT_SELECT = 0xF04D;
+        DFL_LATCH_DATA_PORT_SELECT = 0xF04E;
+        SPEED_LATCH_DATA_PORT_SELECT = 0xF04F;
+        
+        % MCC06 general COUNTER COMMAND
+        ADDRESS_COUNTER_PRESET = 0x0000;
+        ADDRESS_COUNTER_MAX_COUNT_SET = 0x000A;
+        
+        % MCC06 special COUNTER COMMAND
+        ADDRESS_COUNTER_COMPARE_REGISTER1_SET = 0x0001;
+        ADDRESS_COUNTER_COMPARE_REGISTER2_SET = 0x0002;
+        ADDRESS_COUNTER_COMPARE_REGISTER3_SET = 0x0003;
+        PULSE_COUNTER_PRESET = 0x0010;
+        PULSE_COUNTER_COMPARE_REGISTER1_SET = 0x0011;
+        PULSE_COUNTER_COMPARE_REGISTER2_SET = 0x0012;
+        PULSE_COUNTER_COMPARE_REGISTER3_SET = 0x0013;
+        PULSE_COUNTER_MAX_COUNT_SET = 0x001A;
+        DFL_COUNTER_PRESET = 0x0020;
+        DFL_COUNTER_COMPARE_REGISTER1_SET = 0x0021;
+        DFL_COUNTER_COMPARE_REGISTER2_SET = 0x0022;
+        DFL_COUNTER_COMPARE_REGISTER3_SET = 0x0023;
+        DFL_COUNTER_MAX_COUNT_SET = 0x002A;
+        SPEED_COUNTER_COMPARE_REGISTER1_SET = 0x0031;
+        SPEED_COUNTER_COMPARE_REGISTER2_SET = 0x0032;
+        SPEED_COUNTER_COMPARE_REGISTER3_SET = 0x0033;
+        SPEED_OVF_COUNT_SET = 0x003A;
+        
+        % HARD CONFIGURATION COMMAND
+        HARD_CONFIGURATION1 = 0x0001;
+        HARD_CONFIGURATION2 = 0x0002;
+        HARD_CONFIGURATION3 = 0x0003;
+        HARD_CONFIGURATION4 = 0x0004;
+        HARD_CONFIGURATION5 = 0x0005;
+        HARD_CONFIGURATION6 = 0x0006;
+        PAUSE_SET_SPEC = 0x0010;
+        PAUSE_CLR_SPEC = 0x0011;
+        PAUSE = 0x0012;
+        HARD_CONFIGURATION_SET_DATA_READ = 0x0020;
+        GPOUT = 0x0021;
 
-            pulse_num = uint32( abs(Degmm)*obj.Degmm2Pulse(num) ); %Number of pulses
-            if Degmm>0  %Scan装置記載の符号と整合させるためわざと逆転させている
-                pulse_num = bitcmp( pulse_num, 'uint32' ); %負数は2の補数で与える
-            end
+        %　パルスレートのテーブル：取説 8-1ドライブの基本パラメータを設定する(4) P.46参照
+        RATE_DATA_TABLE_No = uint8(0x00:0x73);
+        RATE_DATA_TABLE_Rate = [...
+            1000 910 820 750 680 620 560 510 470 430 390 360 330 300 270 240 220 200 180 160 150 130 120 110 ...
+             100  91  82  75  68  62  56  51  47  43  39  36  33  30  27  24  22  20  18  16  15  13  12  11 ...
+              10 9.1 8.2 7.5 6.8 6.2 5.6 5.1 4.7 4.3 3.9 3.6 3.3 3.0 2.7 2.4 2.2 2.0 1.8 1.6 1.5 1.3 1.2 1.1 ...
+             1.0 .91 .82 .75 .68 .62 .56 .51 .47 .43 .39 .36 .33 .30 .27 .24 .22 .20 .18 .16 .15 .13 .12 .11 ...
+             .10 .091 .082 .075 .068 .062 .056 .051 .047 .043 .039 .036 .033 .030 .027 .024 .022 .020 .018 .016]; %設定可能な加速度[ms/kHz]の一覧
+        errorMsg = {...
+            'invalid error message', ...
+            'DLL内部でAPIエラーが発生しました。' ...
             
-            obj.SetData1(num, pulse_num);
-            obj.Wait(num, 0);
-            obj.IWDrive(num, '0044');
-        end        
-        function S_AbsDrive(obj, num, Degmm)
-            %S_AbsDrive(obj, num, Degmm) excutes the absolute S-shaped drive
-            %   Degmm : degree or mm
-            if nargin~=3, error('Wrong number of input arguments') ; end
-            if abs(Degmm)>obj.Move_Limit(num), error('Movement %d is too big: ',Degmm); end %事故防止:移動量はMove_Limit以内に限定
+            };
+            
+    end
+    methods
+%         function Address_Reset(obj, varargin)
+%             %Address_Reset(obj, num) sets the current position as origin.
+%             %   引数: 1, 2, 3, 4, 5 or 'X', 'Y', 'Z', 'R', 'A' これ以外は無視
+%             %   引数は何個でもOK
+%             %   ex)  obj.Address_Reset( 'X', 'Z', 'A' ),
+%             %        obj.Address_Reset( 1, 2, 3 )
+%             %   You'd better use this when 'AbsDrive' is excuted.
+% 
+%             for J=1:numel(varargin)
+%                 if ischar(varargin{J})
+%                     num = int32( strfind('XYZRA', upper(varargin{J})) ); %文字列の場合 ==> 番号に変換
+%                 else
+%                     num = varargin{J};
+%                 end 
+%                 if num>=1 && num<=5
+%                     obj.Wait(num, 0);
+%                     obj.SetData1(num, 0);
+%                     obj.IWCounter(num, '0000');
+%                 end
+%             end
+% 
+%         end
+%         function IWData(obj, num)
+%             %IWData(obj, num) writes the Command Data on the DRIVE COMMAND DATA
+%             %PORT 1,2,3
+%             if nargin~=2, error('Wrong number of input arguments') ; end
+%             FUNC_NAME = 'MC06_IWData';
+%             [temp, obj.sData(num), obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), obj.sDataPtr(num), obj.sResultPtr(num));
+%             if ~temp || obj.sResult(num).MC06_Result(2)
+%                 error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2))
+%             end          
+%         end
 
-            pulse_num = uint32( abs(Degmm)*obj.Degmm2Pulse(num) ); %Number of pulses
-            if Degmm>0
-                pulse_num = bitcmp( pulse_num, 'uint32' ); %負数は2の補数で与える
-            end
-            
-            obj.SetData1(num, pulse_num);
-            obj.Wait(num, 0);
-            obj.IWDrive(num, '0045');
-        end    
-    end       
+%         function IWDrive(obj, num, HEX_CODE)
+%             %IWDrive(obj, num, 'HEX_CODE') writes in a lump the Command Code&Data on the
+%             %DRIVE COMMAND&DATA PORT 1,2,3
+%             assert(nargin == 3, 'Wrong number of input arguments');
+%             FUNC_NAME = 'MC06_IWDrive';
+%             Cmd = uint16( hex2dec(HEX_CODE) ); %HEX CODE (16進数)
+%             [temp, obj.sData(num), obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), Cmd, obj.sDataPtr(num), obj.sResultPtr(num));
+%             if ~temp || obj.sResult(num).MC06_Result(2)
+%                 error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME,temp, num, obj.sResult(num).MC06_Result(2))
+%             end          
+%         end
+%         function IWCounter(obj, num,  HEX_CODE)
+%             %IWCounter(obj, num, 'HEX_CODE') writes in a lump the Counter Code&Data on the
+%             %COUNTER COMMAND&DATA PORT(1,2,3)
+%             if nargin~=3, error('Wrong number of input arguments') ; end
+% 
+%             FUNC_NAME = 'MC06_IWCounter';
+%             Cmd = uint16( hex2dec(HEX_CODE) ); %HEX CODE (16進数)
+%             [temp, obj.sData(num), obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), Cmd, obj.sDataPtr(num), obj.sResultPtr(num));
+%             if ~temp || obj.sResult(num).MC06_Result(2)
+%                 error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME,temp, num, obj.sResult(num).MC06_Result(2))
+%             end          
+%         end
+%         function BWCounterCommand(obj, num, HEX_CODE)
+%             %BWCounterCommand(obj, num, 'HEX_CODE') writes the Command Code on the COUNTER COMMAND PORT
+%             if nargin~=3, error('Wrong number of input arguments') ; end
+%             FUNC_NAME = 'MC06_BWCounterCommand';
+% 
+%             Cmd = uint16( hex2dec(HEX_CODE) ); %HEX CODEを10進数のuint16に
+%             CmdPtr = libpointer('uint16Ptr', Cmd); %HEX CODEのポインタ
+%             [temp, ~, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), CmdPtr, obj.sResultPtr(num));
+%             if ~temp || obj.sResult(num).MC06_Result(2)
+%                 error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d',  FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2))
+%             end            
+%         end       
+%         function BWCounterData(obj, num, number, pData)
+%             %BWCounterData(obj, num, number, pData) writes the 'pData' on the DRIVE DATA PORT 'number'
+%             if nargin == 4
+%                 switch number
+%                     case 1
+%                         FUNC_NAME = 'MC06_BWCounterData1';
+%                     case 2
+%                         FUNC_NAME = 'MC06_BWCounterData2';
+%                     case 3
+%                         FUNC_NAME = 'MC06_BWCounterData3';
+%                     otherwise
+%                         error('DrivePort Number has to be 1, 2, or 3')
+%                 end
+%                 pDataPtr = libpointer('uint16Ptr', pData);
+%                 [temp, ~, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), pDataPtr, obj.sResultPtr(num));
+%                 if ~temp || obj.sResult(num).MC06_Result(2)
+%                     error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2));
+%                 end
+%             else
+%                error('Wrong number of input arguments(BWDriveData)') 
+%             end
+%         end
+
+%         function SetData1(obj, num, pData)
+%             %SetData1(obj, num, pData) calls 'MC06_SetData1'
+%             if nargin~=3, error('Wrong number of input arguments') ; end
+%             obj.sData(num) = calllib('Mc06A', 'MC06_SetData1', uint32(pData), obj.sDataPtr(num));
+%         end
+%         function pData = GetData(obj, num)
+%             %GetData(obj, num) calls 'MC06_GetData'
+%             [pData, ~] = calllib('Mc06A', 'MC06_GetData', obj.sDataPtr(num));
+%         end
+%         function psData = BRStatus(obj, num, number)
+%             %psData = BRStatus(obj, num, number) reads the data from STATUS (number) PORT
+%             if nargin == 3
+%                 switch number
+%                     case 1
+%                         FUNC_NAME = 'MC06_BRStatus1';
+%                     case 2
+%                         FUNC_NAME = 'MC06_BRStatus2';
+%                     case 3
+%                         FUNC_NAME = 'MC06_BRStatus3';
+%                     case 4
+%                         FUNC_NAME = 'MC06_BRStatus4';
+%                     case 5
+%                         FUNC_NAME = 'MC06_BRStatus5';
+%                     otherwise
+%                         error('STATUS PORT Number has to be 1, 2, 3, 4, or 5');
+%                 end
+%                 psData = uint16(0);
+%                 psDataPtr = libpointer('uint16Ptr', psData);
+%                 [temp, psData, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), psDataPtr, obj.sResultPtr(num));
+%                 if ~temp || obj.sResult(num).MC06_Result(2)
+%                     error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2));
+%                 end
+%             else
+%                error('Wrong number of input arguments(BWDriveData)') ;
+%             end
+%         end
+%         function pData = BRDriveData(obj, num, number)
+%             %pData = BRDriveData(obj, num, number) reads the data from DRIVE DATA (number) PORT
+%             if nargin == 3
+%                 switch number
+%                     case 1
+%                         FUNC_NAME = 'MC06_BRDriveData1';
+%                     case 2
+%                         FUNC_NAME = 'MC06_BRDriveData2';
+%                     case 3
+%                         FUNC_NAME = 'MC06_BRDriveData3';
+%                     otherwise
+%                         error('DrivePort Number has to be 1, 2, or 3')
+%                 end
+%                 pData = uint16(0);
+%                 pDataPtr = libpointer('uint16Ptr', pData);
+%                 [temp, pData, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), pDataPtr, obj.sResultPtr(num));
+%                 if ~temp || obj.sResult(num).MC06_Result(2)
+%                     error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2));
+%                 end
+%             else
+%                error('Wrong number of input arguments(BWDriveData)');
+%             end
+%         end
+%         function IRDrive(obj, num)
+%             %IRDrive(obj, num) reads in a lump the data from DRIVE DATA 1,2,3 PORT
+%             FUNC_NAME = 'MC06_IRDrive';
+%             [temp, obj.sData(num), obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), obj.sDataPtr(num), obj.sResultPtr(num));
+%             if ~temp || obj.sResult(num).MC06_Result(2)
+%                 error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2));
+%             end
+%         end
+%   
+%         function Rate = RATE_DATA_TABLE(obj, Table_number)
+%             if nargin~=2, error('Wrong number of input arguments') ; end
+%             if hex2dec(Table_number)>60
+%                 error('Table_number has to be 00~3C');
+%             elseif hex2dec(Table_number)==0
+%                 Rate = 1000; %RATE_DATA配列は要素番号0を持てないのでこれだけ例外で考える.
+%             else
+%                 Rate = obj.RATE_DATA( hex2dec(Table_number) );
+%             end
+%         end
+%         function BWDriveCommand(obj, num, HEX_CODE)
+%             %BWDriveCommand(obj, num, 'HEX_CODE') writes the Command Code on the DRIVE COMMAND PORT
+%             if nargin~=3, error('Wrong number of input arguments') ; end
+%             
+%             FUNC_NAME = 'MC06_BWDriveCommand';
+%             Cmd = uint16( hex2dec(HEX_CODE) ); %HEX CODEを10進数のuint16に
+%             CmdPtr = libpointer('uint16Ptr', Cmd); %HEX CODEのポインタ
+%             [temp, ~, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), CmdPtr, obj.sResultPtr(num));
+%             if ~temp || obj.sResult(num).MC06_Result(2)
+%                 error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d',  FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2))
+%             end            
+%         end
+%         function BWDriveData(obj, num, number, HEX_CODE)
+%             %BWDriveData(obj, num, number, HEX_CODE) writes the 'HEX_CODE' on the DRIVE DATA PORT 'number'
+%             
+%             if nargin == 4
+%                 switch number
+%                     case 1
+%                         FUNC_NAME = 'MC06_BWDriveData1';
+%                     case 2
+%                         FUNC_NAME = 'MC06_BWDriveData2';
+%                     case 3
+%                         FUNC_NAME = 'MC06_BWDriveData3';
+%                     otherwise
+%                         error('DrivePort Number has to be 1, 2, or 3')
+%                 end
+%                 Cmd = uint16( hex2dec(HEX_CODE) );
+%                 pDataPtr = libpointer('uint16Ptr', Cmd);
+%                 [temp, ~, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), pDataPtr, obj.sResultPtr(num));
+%                 if ~temp || obj.sResult(num).MC06_Result(2)
+%                     error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2))
+%                 end
+%             else
+%                error('Wrong number of input arguments(BWDriveData)') 
+%             end
+%         end
+%         
+
+    end
 end %class
 
 
