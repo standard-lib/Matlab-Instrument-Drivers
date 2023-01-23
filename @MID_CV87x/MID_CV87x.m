@@ -8,17 +8,24 @@ classdef MID_CV87x < handle
     %       PS.driveAbs('Y', 30, 'Z', 20);------------Y軸のS字ドライブ(+30mm)を実行
     % 変更したいこと一覧(2018松田）
     % ・可動域制限とか速度制限とかはscanner.confからデフォルトで読み込みたい．
-    % ・Boardnumは軸の数だけ用意されるべきで，０を仮定したくない．
-    % ・Drive速度などをscanner.confを読み込んで決めさせたい．
+    % ・Boardnumはボードの数だけ用意されるべきで，０を仮定したくない．
+    % ・Drive速度などをscanner.confを読み込んで決めさせたい．軸の名前はscanner.confで決めたい
     % ・軸の名前を strfind('XYZRA',
-    % upper(num))で軸番号に変換しているが，軸の名前はscanner.confで決めたい
+    % upper(num))で軸番号に変換しているが，
     % ・プログラム中に可能な限りリテラルの数字を書かない．おそらくscanner.confから読み取れる値のはず．
     % ・ジョグモードを追加したい．PS.jog()を実行すると，Escを押すまで，キー待ちをして，
     % F1:第1軸＋，F2:第1軸－，F3：第2軸＋．．．のようなジョグを行う．ショートカットキーはInsight Scanに準拠する．
     properties(SetAccess = private)
         hDev;       % デバイス変数(32ビット符号なし整数DWORD)
+        boardNo;
+        axisNo;
+        enable;
+        label;
+        unit;
+        pulseResolution;
+        pulseReverse;     % 軸を反転するか
+        
         Degmm2Pulse % 1Degree or 1mm が何パルスに対応するか
-        pulseReverse = [false, true, true, false]  % 軸を反転するか
         Vel_Max;    %速度域制限:   あやまって大きく動かしすぎないように保険を掛ける
         Accel_Max;  %加速度域制限: あやまって大きく動かしすぎないように保険を掛ける
         Vel_3level; %低中高 速度値: 低速と中速と高速の速度値を格納
@@ -29,7 +36,7 @@ classdef MID_CV87x < handle
         %ここのﾊﾟﾗﾒｰﾀは自分で適宜決める
     end    
     properties( Constant )
-        Boardnum = uint16(0); % 2014/7/26現在Board numberは0だけ
+%         Boardnum = uint16(0); % 2014/7/26現在Board numberは0だけ
     end
    
     methods
@@ -38,6 +45,16 @@ classdef MID_CV87x < handle
             if (~libisloaded('Mc06A'))
                 loadlibrary('Mc06A','Mc06A.h');
             end
+            M = readcell('scanner.conf', 'FileType', 'text');
+            cols = 2:size(M,2);
+            obj.boardNo = uint16(cell2mat(pickRow(M, 'BoardNo', cols)));
+            obj.axisNo  = uint32(cell2mat(pickRow(M, 'AxisNo', cols)));
+            obj.enable  = strcmpi('true', pickRow(M, 'Enable', cols));
+            obj.label   =                 pickRow(M, 'Label', cols);
+            obj.unit    =                 pickRow(M, 'Unit', cols);
+            obj.pulseResolution = cell2mat(pickRow(M, 'PulseResolution', cols));
+            obj.pulseReverse = strcmpi('true', pickRow(M, 'PulseReverse', cols));
+            
             obj.Axis_num = uint32([0 1 2 3]);
             obj.Axis_char = 'XYZR';
             
@@ -61,7 +78,8 @@ classdef MID_CV87x < handle
                                    0.1, 1,   5,   5, 0.4, 0.4, 0.4, 0.4; ... %  〃
                                    0.01, 1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.2];     %Sdrive初期設定値 [開始&終了速度(deg/s),最大速度(deg/s),立上り加速度(deg/s^2),立下り加速度(deg/s^2), S字部速度1~4(deg/s)] 
 
-            obj.BOpen; %デバイスオープン            
+            obj.BOpen(); %デバイスオープン            
+            fprintf('All devices were successfully opened\n');
             obj.SetDriveSpeed('L', 'X', 'slow'); %すべての drive speed を'slow'に初期化
             obj.SetDriveSpeed('L', 'Y', 'slow');
             obj.SetDriveSpeed('L', 'Z', 'slow');            
@@ -126,7 +144,7 @@ classdef MID_CV87x < handle
             for axis = 1:4
                 dataarr = obj.readMC06( axis, obj.ADDRESS_COUNTER_PORT_SELECT);
                 addr_int32 = getdata(dataarr, 'int32');
-                addr(axis) = addr_int32 / obj.Degmm2Pulse(axis);
+                addr(axis) = cast(addr_int32,"double") / obj.Degmm2Pulse(axis);
             end
         end
         
@@ -300,26 +318,39 @@ classdef MID_CV87x < handle
             %This is a Destructor: delete(obj)
             obj.BClose;
             clear obj
-            fprintf('\nC_V872 stepping motor controller was successifully closed\n');
+            fprintf('C_V872 stepping motor controller was successifully closed\n');
         end      
 %    end %methods
 
 %    methods( Access = private ) %外部からは参照することのない関数
+        
+        % signatures of methods in the private folder
+        assertin(value, minimum, maximum)
+        assertin_oc(value, minimum, maximum)
+        [concatenatedstr] = concatinputstr(celllist)
+        [value32] = getdata(arraydata, type)
+        [valMSB, valLSB] = getdata_two8(arraydata, type)
+        [arraydata] = setdata1_24(indata) %signature of setdata1_24
+        [arraydata] = setdata1_32(int32data) %signature of setdata1_24
+        [arraydata] = setdata_two8(indataMSB, indataLSB)
+
         function BOpen(obj)
             %Open(obj) opens a Device
             %   This function is automatically called by the Constructor, so
             %   you don't need to care about this function
             FUNC_NAME = 'MC06_BOpen';
-            result = struct('MC06_Result', zeros(1,4, 'uint16'));
-            resultPtr = libpointer( 'MC06_TAG_S_RESULT', result );
-            devHandler = zeros(8,1, 'uint32');
-            for idxDev=1:numel(obj.Axis_num)
-                hDevPtr  =  libpointer( 'uint32Ptr', devHandler(idxDev) );
-                [retVal, devHandler(idxDev), result] = calllib('Mc06A', FUNC_NAME, obj.Boardnum, obj.Axis_num(idxDev), hDevPtr, resultPtr);
-                obj.assertionMC06(retVal, result); % call error function
+%             result = struct('MC06_Result', zeros(1,4, 'uint16'));
+%             resultPtr = libpointer( 'MC06_TAG_S_RESULT', result );
+            obj.hDev = zeros(numel(obj.axisNo),1, 'uint32');
+            for idxDev=1:numel(obj.axisNo)
+                if( obj.enable(idxDev) )
+                    hDevPtr  =  libpointer( 'uint32Ptr', obj.hDev(idxDev) );
+                    [obj.hDev(idxDev)] = obj.callMC06(FUNC_NAME, obj.boardNo(idxDev), obj.Axis_num(idxDev), hDevPtr);
+%                     [retVal, obj.hDev(idxDev), result] = calllib('Mc06A', FUNC_NAME, obj.Boardnum, obj.Axis_num(idxDev), hDevPtr, resultPtr);
+%                     obj.assertionMC06(retVal, result); % call error function
+                    fprintf('%s successfully opened\n', obj.label{idxDev});
+                end
             end
-            obj.hDev = devHandler(1:numel(obj.Axis_num));
-            fprintf('All devices were successfully opened\n');
         end
         function BClose(obj)
             %Close(obj) close the opened Device
@@ -333,16 +364,8 @@ classdef MID_CV87x < handle
                 obj.assertionMC06(retVal, result); % call error function
             end
         end
-        %////// 書き込み関連 //////
-        % signatures in the private folder
-        assertin(value, minimum, maximum)
-        assertin_oc(value, minimum, maximum)
-        [concatenatedstr] = concatinputstr(celllist)
-        [value32] = getdata(arraydata, type)
-        [valMSB, valLSB] = getdata_two8(arraydata, type)
-        [arraydata] = setdata1_24(indata) %signature of setdata1_24
-        [arraydata] = setdata_two8(indataMSB, indataLSB)
         
+        %////// 書き込み関連 //////
         function writeMC06(obj, devNum, DriveOrCounter, command, dataarray, senddata )
             arguments
                 obj
@@ -354,15 +377,16 @@ classdef MID_CV87x < handle
             end
             DorC = find(strcmpi({'drive', 'counter'}, DriveOrCounter), 1);
             assert(~isempty(DorC), 'DriveOrCounter is not ''drive'' nor ''counter''');
-            result = struct('MC06_Result', zeros(1,4, 'uint16'));
-            resultPtr = libpointer( 'MC06_TAG_S_RESULT', result );
+%             result = struct('MC06_Result', zeros(1,4, 'uint16'));
+%             resultPtr = libpointer( 'MC06_TAG_S_RESULT', result );
             
             if( DorC == 1 && any(senddata == 1) && any( senddata == 2) && any( sendata == 3) ) 
                 % driveデータの場合、すべてのデータを送るコマンドがあるのでそちらを優先
                 data = struct('MC06_Data',[dataarray(1), dataarray(2), dataarray(3), uint16(0)]);
                 dataPtr = libpointer( 'MC06_TAG_S_DATA', data );
-                [retVal, ~, result] = calllib('Mc06A', 'MC06_IWData', obj.hDev(devNum), dataPtr, resultPtr);
-                obj.assertionMC06(retVal, result); % call error function
+                [~] = obj.callMC06('MC06_IWData', obj.hDev(devNum), dataPtr);
+%                 [retVal, ~, result] = calllib('Mc06A', 'MC06_IWData', obj.hDev(devNum), dataPtr, resultPtr);
+%                 obj.assertionMC06(retVal, result); % call error function
             else
                 funcNames = {...
                     'MC06_BWDriveData1', ...
@@ -373,8 +397,9 @@ classdef MID_CV87x < handle
                     'MC06_BWCounterData3'};
                 for senddata_idx = senddata
                     dataPtr = libpointer('uint16Ptr', dataarray( senddata_idx ));
-                    [retVal, ~, result] = calllib('Mc06A', funcNames{DorC, senddata_idx}, obj.hDev(devNum), dataPtr, resultPtr);
-                    obj.assertionMC06(retVal, result); % call error function
+                    [~] = obj.callMC06(funcNames{DorC, senddata_idx}, obj.hDev(devNum), dataPtr);
+%                     [retVal, ~, result] = calllib('Mc06A', funcNames{DorC, senddata_idx}, obj.hDev(devNum), dataPtr, resultPtr);
+%                     obj.assertionMC06(retVal, result); % call error function
                 end
             end
             
@@ -383,12 +408,14 @@ classdef MID_CV87x < handle
             switch(DriveOrCounter)
             case 'drive'
                 cmdPtr = libpointer('uint16Ptr', command);
-                [retVal, ~, result] = calllib('Mc06A', 'MC06_BWDriveCommand', obj.hDev(devNum), cmdPtr, resultPtr);
-                obj.assertionMC06(retVal, result); % call error function
+                [~] = obj.callMC06('MC06_BWDriveCommand', obj.hDev(devNum), cmdPtr);
+%                 [retVal, ~, result] = calllib('Mc06A', 'MC06_BWDriveCommand', obj.hDev(devNum), cmdPtr, resultPtr);
+%                 obj.assertionMC06(retVal, result); % call error function
             case 'counter'
                 cmdPtr = libpointer('uint16Ptr', command);
-                [retVal, ~, result] = calllib('Mc06A', 'MC06_BWCounterCommand', obj.hDev(devNum), cmdPtr, resultPtr);
-                obj.assertionMC06(retVal, result); % call error function
+                [~] = obj.callMC06('MC06_BWCounterCommand', obj.hDev(devNum), cmdPtr);
+%                 [retVal, ~, result] = calllib('Mc06A', 'MC06_BWCounterCommand', obj.hDev(devNum), cmdPtr, resultPtr);
+%                 obj.assertionMC06(retVal, result); % call error function
             end
         end
 
@@ -408,9 +435,65 @@ classdef MID_CV87x < handle
             dataarray = data.MC06_Data(1:3);
         end
         
+        function [varargout] = callMC06(obj, func_name, varargin)
+            result = struct('MC06_Result', zeros(1, 4, 'uint16'));
+            resultPtr = libpointer( 'MC06_TAG_S_RESULT', result );
+            if(nargout == 1)
+                switch nargin
+                    case 3
+                        [retVal, varargout{1}, result] = ...
+                            calllib('Mc06A', func_name, varargin{1}, resultPtr);
+                    case 4
+                        [retVal, varargout{1}, result] = ...
+                            calllib('Mc06A', func_name, varargin{1}, varargin{2}, resultPtr);
+                    case 5
+                        [retVal, varargout{1}, result] = ...
+                            calllib('Mc06A', func_name, varargin{1}, varargin{2}, varargin{3}, resultPtr);
+                end
+            elseif(nargout == 0)
+                switch nargin
+                    case 3
+                        [retVal, result] = ...
+                            calllib('Mc06A', func_name, varargin{1}, resultPtr);
+                    case 4
+                        [retVal, result] = ...
+                            calllib('Mc06A', func_name, varargin{1}, varargin{2}, resultPtr);
+                    case 5
+                        [retVal, result] = ...
+                            calllib('Mc06A', func_name, varargin{1}, varargin{2}, varargin{3}, resultPtr);
+                end
+            end
+            obj.assertionMC06(retVal, result); % call error function
+            
+%             BOpen
+%             [retVal, obj.hDev(idxDev), result] 
+% = calllib('Mc06A', FUNC_NAME, obj.Boardnum, obj.Axis_num(idxDev), hDevPtr, resultPtr); 
+%             Bclose
+%             [retVal, result] 
+% = calllib('Mc06A', FUNC_NAME, obj.hDev(J), resultPtr);
+%             IWData
+%             [retVal, ~, result] 
+% = calllib('Mc06A', 'MC06_IWData', obj.hDev(devNum), dataPtr, resultPtr);
+%             BWDriveDatan
+%             [retVal, ~, result] 
+% = calllib('Mc06A', funcNames, obj.hDev(devNum), dataPtr, resultPtr);
+%             [retVal, ~, result] 
+% = calllib('Mc06A', 'MC06_BWDriveCommand', obj.hDev(devNum), cmdPtr, resultPtr);
+%             [retVal, ~, result] 
+% = calllib('Mc06A', 'MC06_BWCounterCommand', obj.hDev(devNum), cmdPtr, resultPtr);
+%             [retVal, ~, result] 
+% = calllib('Mc06A', 'MC06_BWDriveCommand', obj.hDev(devNum), cmdPtr, resultPtr);
+%             [retVal, data, result] 
+% = calllib('Mc06A', 'MC06_IRDrive', obj.hDev(devNum), dataPtr, resultPtr);
+%             BWait
+%             [retVal, result] 
+% = calllib('Mc06A', FUNC_NAME, obj.hDev(num), uint16(Wait_time), resultPtr);
+            
+        end
+
         function assertionMC06( obj, retVal, result )
             if(~retVal)
-                error( [obj.errorMsg{result.MC06_Result(2)} 'in axis %d'], devNum);
+                error( [obj.errorMsg{result.MC06_Result(2)}]);
             end
         end
         
@@ -781,222 +864,40 @@ classdef MID_CV87x < handle
               10 9.1 8.2 7.5 6.8 6.2 5.6 5.1 4.7 4.3 3.9 3.6 3.3 3.0 2.7 2.4 2.2 2.0 1.8 1.6 1.5 1.3 1.2 1.1 ...
              1.0 .91 .82 .75 .68 .62 .56 .51 .47 .43 .39 .36 .33 .30 .27 .24 .22 .20 .18 .16 .15 .13 .12 .11 ...
              .10 .091 .082 .075 .068 .062 .056 .051 .047 .043 .039 .036 .033 .030 .027 .024 .022 .020 .018 .016]; %設定可能な加速度[ms/kHz]の一覧
-        errorMsg = {...
+        
+        errorMsg = {... %error message in sResult struct
             'invalid error message', ...
             'DLL内部でAPIエラーが発生しました。' ...
-            
-            };
+            'NULLポインタが指定されました。', ...
+            'C-V870.sys／C-V872.sysがロードされていません。', ...
+            '指定されたボード番号に誤りがあります。', ...
+            '軸の指定に誤りがあります。', ...
+            'デバイスハンドルの内容が異常です。', ...
+            'デバイスに空きがないため、オープンできません。', ...
+            '指定されたデバイスは、オープンされていません。', ...
+            '指定されたデバイスは、すでにオープンされています。', ...
+            'READY WAIT関数がTIME OVERで終了しています。', ...
+            'WM_QUITメッセージを受信しました。', ...
+            'READY WAIT中にREADY WAIT中止関数が実行されました。', ...
+            '同一デバイスのREADY WAIT関数が複数同時に実行されました。', ...
+            'ボードが１枚も検出できません。', ...
+            '検出したボード枚数が10枚を超えました。', ...
+            '指定されたボード番号に該当するボードがありません。', ...
+            'ボード番号が重複しています。', ...
+            '原因不明のエラーが発生しました。', ...
+            '指定された割り込みはすでに設定されています。', ...
+            'INTの指定に誤りがあります。', ...
+            'すでに指定したINTは、設定されています。', ...
+            '割り込みがクローズされていません。', ...
+            'INT FACTORの指定に誤りがあります。', ...
+            '割り込みがオープンされていません。', ...
+            'INTの設定が行われていません。', ...
+            '指定したMCC06のSTATUS1 PORT BUSY=1である為、関数の実行が出来ません。', ...
+            'C-V870.sys/C-V872.sys内部でMCC06にCOMMANDを書き込んだ後、STATUS1 PORT BUSY=0の確認を行っていましたが、100ms待ってもBUSY=0にならない為、関数の実行を中止しました。' ...
+        };
             
     end
-    methods
-%         function Address_Reset(obj, varargin)
-%             %Address_Reset(obj, num) sets the current position as origin.
-%             %   引数: 1, 2, 3, 4, 5 or 'X', 'Y', 'Z', 'R', 'A' これ以外は無視
-%             %   引数は何個でもOK
-%             %   ex)  obj.Address_Reset( 'X', 'Z', 'A' ),
-%             %        obj.Address_Reset( 1, 2, 3 )
-%             %   You'd better use this when 'AbsDrive' is excuted.
-% 
-%             for J=1:numel(varargin)
-%                 if ischar(varargin{J})
-%                     num = int32( strfind('XYZRA', upper(varargin{J})) ); %文字列の場合 ==> 番号に変換
-%                 else
-%                     num = varargin{J};
-%                 end 
-%                 if num>=1 && num<=5
-%                     obj.Wait(num, 0);
-%                     obj.SetData1(num, 0);
-%                     obj.IWCounter(num, '0000');
-%                 end
-%             end
-% 
-%         end
-%         function IWData(obj, num)
-%             %IWData(obj, num) writes the Command Data on the DRIVE COMMAND DATA
-%             %PORT 1,2,3
-%             if nargin~=2, error('Wrong number of input arguments') ; end
-%             FUNC_NAME = 'MC06_IWData';
-%             [temp, obj.sData(num), obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), obj.sDataPtr(num), obj.sResultPtr(num));
-%             if ~temp || obj.sResult(num).MC06_Result(2)
-%                 error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2))
-%             end          
-%         end
 
-%         function IWDrive(obj, num, HEX_CODE)
-%             %IWDrive(obj, num, 'HEX_CODE') writes in a lump the Command Code&Data on the
-%             %DRIVE COMMAND&DATA PORT 1,2,3
-%             assert(nargin == 3, 'Wrong number of input arguments');
-%             FUNC_NAME = 'MC06_IWDrive';
-%             Cmd = uint16( hex2dec(HEX_CODE) ); %HEX CODE (16進数)
-%             [temp, obj.sData(num), obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), Cmd, obj.sDataPtr(num), obj.sResultPtr(num));
-%             if ~temp || obj.sResult(num).MC06_Result(2)
-%                 error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME,temp, num, obj.sResult(num).MC06_Result(2))
-%             end          
-%         end
-%         function IWCounter(obj, num,  HEX_CODE)
-%             %IWCounter(obj, num, 'HEX_CODE') writes in a lump the Counter Code&Data on the
-%             %COUNTER COMMAND&DATA PORT(1,2,3)
-%             if nargin~=3, error('Wrong number of input arguments') ; end
-% 
-%             FUNC_NAME = 'MC06_IWCounter';
-%             Cmd = uint16( hex2dec(HEX_CODE) ); %HEX CODE (16進数)
-%             [temp, obj.sData(num), obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), Cmd, obj.sDataPtr(num), obj.sResultPtr(num));
-%             if ~temp || obj.sResult(num).MC06_Result(2)
-%                 error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME,temp, num, obj.sResult(num).MC06_Result(2))
-%             end          
-%         end
-%         function BWCounterCommand(obj, num, HEX_CODE)
-%             %BWCounterCommand(obj, num, 'HEX_CODE') writes the Command Code on the COUNTER COMMAND PORT
-%             if nargin~=3, error('Wrong number of input arguments') ; end
-%             FUNC_NAME = 'MC06_BWCounterCommand';
-% 
-%             Cmd = uint16( hex2dec(HEX_CODE) ); %HEX CODEを10進数のuint16に
-%             CmdPtr = libpointer('uint16Ptr', Cmd); %HEX CODEのポインタ
-%             [temp, ~, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), CmdPtr, obj.sResultPtr(num));
-%             if ~temp || obj.sResult(num).MC06_Result(2)
-%                 error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d',  FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2))
-%             end            
-%         end       
-%         function BWCounterData(obj, num, number, pData)
-%             %BWCounterData(obj, num, number, pData) writes the 'pData' on the DRIVE DATA PORT 'number'
-%             if nargin == 4
-%                 switch number
-%                     case 1
-%                         FUNC_NAME = 'MC06_BWCounterData1';
-%                     case 2
-%                         FUNC_NAME = 'MC06_BWCounterData2';
-%                     case 3
-%                         FUNC_NAME = 'MC06_BWCounterData3';
-%                     otherwise
-%                         error('DrivePort Number has to be 1, 2, or 3')
-%                 end
-%                 pDataPtr = libpointer('uint16Ptr', pData);
-%                 [temp, ~, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), pDataPtr, obj.sResultPtr(num));
-%                 if ~temp || obj.sResult(num).MC06_Result(2)
-%                     error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2));
-%                 end
-%             else
-%                error('Wrong number of input arguments(BWDriveData)') 
-%             end
-%         end
-
-%         function SetData1(obj, num, pData)
-%             %SetData1(obj, num, pData) calls 'MC06_SetData1'
-%             if nargin~=3, error('Wrong number of input arguments') ; end
-%             obj.sData(num) = calllib('Mc06A', 'MC06_SetData1', uint32(pData), obj.sDataPtr(num));
-%         end
-%         function pData = GetData(obj, num)
-%             %GetData(obj, num) calls 'MC06_GetData'
-%             [pData, ~] = calllib('Mc06A', 'MC06_GetData', obj.sDataPtr(num));
-%         end
-%         function psData = BRStatus(obj, num, number)
-%             %psData = BRStatus(obj, num, number) reads the data from STATUS (number) PORT
-%             if nargin == 3
-%                 switch number
-%                     case 1
-%                         FUNC_NAME = 'MC06_BRStatus1';
-%                     case 2
-%                         FUNC_NAME = 'MC06_BRStatus2';
-%                     case 3
-%                         FUNC_NAME = 'MC06_BRStatus3';
-%                     case 4
-%                         FUNC_NAME = 'MC06_BRStatus4';
-%                     case 5
-%                         FUNC_NAME = 'MC06_BRStatus5';
-%                     otherwise
-%                         error('STATUS PORT Number has to be 1, 2, 3, 4, or 5');
-%                 end
-%                 psData = uint16(0);
-%                 psDataPtr = libpointer('uint16Ptr', psData);
-%                 [temp, psData, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), psDataPtr, obj.sResultPtr(num));
-%                 if ~temp || obj.sResult(num).MC06_Result(2)
-%                     error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2));
-%                 end
-%             else
-%                error('Wrong number of input arguments(BWDriveData)') ;
-%             end
-%         end
-%         function pData = BRDriveData(obj, num, number)
-%             %pData = BRDriveData(obj, num, number) reads the data from DRIVE DATA (number) PORT
-%             if nargin == 3
-%                 switch number
-%                     case 1
-%                         FUNC_NAME = 'MC06_BRDriveData1';
-%                     case 2
-%                         FUNC_NAME = 'MC06_BRDriveData2';
-%                     case 3
-%                         FUNC_NAME = 'MC06_BRDriveData3';
-%                     otherwise
-%                         error('DrivePort Number has to be 1, 2, or 3')
-%                 end
-%                 pData = uint16(0);
-%                 pDataPtr = libpointer('uint16Ptr', pData);
-%                 [temp, pData, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), pDataPtr, obj.sResultPtr(num));
-%                 if ~temp || obj.sResult(num).MC06_Result(2)
-%                     error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2));
-%                 end
-%             else
-%                error('Wrong number of input arguments(BWDriveData)');
-%             end
-%         end
-%         function IRDrive(obj, num)
-%             %IRDrive(obj, num) reads in a lump the data from DRIVE DATA 1,2,3 PORT
-%             FUNC_NAME = 'MC06_IRDrive';
-%             [temp, obj.sData(num), obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), obj.sDataPtr(num), obj.sResultPtr(num));
-%             if ~temp || obj.sResult(num).MC06_Result(2)
-%                 error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2));
-%             end
-%         end
-%   
-%         function Rate = RATE_DATA_TABLE(obj, Table_number)
-%             if nargin~=2, error('Wrong number of input arguments') ; end
-%             if hex2dec(Table_number)>60
-%                 error('Table_number has to be 00~3C');
-%             elseif hex2dec(Table_number)==0
-%                 Rate = 1000; %RATE_DATA配列は要素番号0を持てないのでこれだけ例外で考える.
-%             else
-%                 Rate = obj.RATE_DATA( hex2dec(Table_number) );
-%             end
-%         end
-%         function BWDriveCommand(obj, num, HEX_CODE)
-%             %BWDriveCommand(obj, num, 'HEX_CODE') writes the Command Code on the DRIVE COMMAND PORT
-%             if nargin~=3, error('Wrong number of input arguments') ; end
-%             
-%             FUNC_NAME = 'MC06_BWDriveCommand';
-%             Cmd = uint16( hex2dec(HEX_CODE) ); %HEX CODEを10進数のuint16に
-%             CmdPtr = libpointer('uint16Ptr', Cmd); %HEX CODEのポインタ
-%             [temp, ~, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), CmdPtr, obj.sResultPtr(num));
-%             if ~temp || obj.sResult(num).MC06_Result(2)
-%                 error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d',  FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2))
-%             end            
-%         end
-%         function BWDriveData(obj, num, number, HEX_CODE)
-%             %BWDriveData(obj, num, number, HEX_CODE) writes the 'HEX_CODE' on the DRIVE DATA PORT 'number'
-%             
-%             if nargin == 4
-%                 switch number
-%                     case 1
-%                         FUNC_NAME = 'MC06_BWDriveData1';
-%                     case 2
-%                         FUNC_NAME = 'MC06_BWDriveData2';
-%                     case 3
-%                         FUNC_NAME = 'MC06_BWDriveData3';
-%                     otherwise
-%                         error('DrivePort Number has to be 1, 2, or 3')
-%                 end
-%                 Cmd = uint16( hex2dec(HEX_CODE) );
-%                 pDataPtr = libpointer('uint16Ptr', Cmd);
-%                 [temp, ~, obj.sResult(num)] = calllib('Mc06A', FUNC_NAME, obj.hDev(num), pDataPtr, obj.sResultPtr(num));
-%                 if ~temp || obj.sResult(num).MC06_Result(2)
-%                     error('Error occured during %s\n temp=%d, sResult(%d).(2)=%d', FUNC_NAME, temp, num, obj.sResult(num).MC06_Result(2))
-%                 end
-%             else
-%                error('Wrong number of input arguments(BWDriveData)') 
-%             end
-%         end
-%         
-
-    end
 end %class
 
 
