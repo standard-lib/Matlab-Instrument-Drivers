@@ -1,0 +1,18 @@
+RPR-4000のリモートコントロールについての注意
+
+RS232の設定：
+The data format is 57.6k baud, 8 data bits, 1 stop bit, no parity, CTS/RTS hardware handshaking.
+CTS/RTSハードウェアhandshakingを行うので，５ピンケーブルが必要．プログラムでもフロー制御をそちらにあわせる．
+
+通信の動作について：
+When power is applied to the RPR4000 all settings are transmitted from the serial port followed by
+"READY" which indicates the unit is ready for use.
+電源投入時に全ての設定を送ってきて，READYを送るらしい．
+ちゃんとこれを読み飛ばすようにしないといけない．
+
+Leading zeros must be entered to completea data field and comply with the command data format.
+コマンドでデータを送るとき，データの範囲に合わせて０で埋める必要がある．
+
+All commands will be echoed back to the external computer which indicates the command was received
+by the pulser or receiver and implemented.
+コマンドを送ると，それをRPR-4000が受け取ったことを示す，エコーバックがある．
