@@ -2,9 +2,10 @@
 classdef MID_33500 < handle
     
 	properties (SetAccess = public)
-        version = 1.0;
+        version = 1.1;
 		vObj;   % visadevオブジェクト
         deviceModel
+        flgDebug
     end
     
 	methods
@@ -18,6 +19,7 @@ classdef MID_33500 < handle
                 visaaddr char
                 NameValueArgs.buffersize double = 1e6
                 NameValueArgs.timeout double = 10
+                NameValueArgs.debugmode logical = false
             end
             visaaddr = convertStringsToChars(visaaddr);
 
@@ -26,6 +28,7 @@ classdef MID_33500 < handle
 			set(obj.vObj, 'timeout', NameValueArgs.timeout);
             obj.deviceModel = obj.vObj.Model;
             fprintf('%s waveform generator was successfully opened\n', obj.deviceModel);
+            obj.flgDebug = NameValueArgs.debugmode;
             obj.clearError();
         end
         % デストラクタ
@@ -42,15 +45,15 @@ classdef MID_33500 < handle
             normalized_waveform = waveform / specify_volt;
             obj.assertError();
         	writeline(fgen,sprintf('SOURce%d:DATA:VOLatile:CLEar', channel));
-            obj.assertError();
-            arbstring = sprintf('SOUR%d:DATA:ARB auto%d %s', channel, channel,  num2str(normalized_waveform,',%.5f'));
-	        %Send Command to set the desired configuration
-	        fprintf('Downloading Waveform...\n\n')
-            writeline(fgen,arbstring);
+            sizeStr = num2str(numel(waveform));
+            sizeSizeStr = num2str(numel(sizeStr));
+            headerString = sprintf(['SOUR%d:DATA:ARB auto%d,#', sizeSizeStr, sizeStr], channel, channel);
+            write(fgen,headerString, "char");
+            writebinblock(fgen,normalized_waveform,"single");
+%             arbstring = sprintf('SOUR%d:DATA:ARB auto%d %s', channel, channel,  num2str(normalized_waveform,',%.5f'));
+% 	        writeline(fgen,arbstring);
             obj.assertError();
             writeline(fgen,'*WAI');
-            obj.assertError();
-        	fprintf('Download Complete\n\n')
             writeline(fgen,sprintf('SOUR%d:FUNCtion:ARBitrary auto%d', channel, channel)); % set current arb waveform to defined arb pulse
             writeline(fgen,sprintf('SOUR%d:FUNCtion ARB', channel)); % turn on arb function
             writeline(fgen,sprintf('SOUR%d:VOLT %e', channel, specify_volt)); % set max waveform amplitude

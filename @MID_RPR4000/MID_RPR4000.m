@@ -10,10 +10,12 @@ classdef MID_RPR4000 < handle
     % rpr.setCycle(5);
     % rpr.setControl(1);
     % rpr.setRepRate(50.0);
-    % freq = rpr.queryFrequency()
-    % cycle = rpr.queryCycle()
-    % control = rpr.queryControl()
-    % repRate = rpr.queryRepRate()
+    % rpr.setTrigger('INT'); %(INT|EXT|XPC)
+    % freq = rpr.queryFrequency();
+    % cycle = rpr.queryCycle();
+    % control = rpr.queryControl();
+    % repRate = rpr.queryRepRate();
+    % trigger = rpr.queryTrigger();
     % clear rpr
     %
     % History:
@@ -30,7 +32,7 @@ classdef MID_RPR4000 < handle
             0.8 0.5 0.4 0.25 0.2 0.16 0.125 0.1 0.8];
         retries = 3;
         maxDutyRatio = 0.001;
-        version = 1.0;
+        version = 1.1;
     end
     
     methods
@@ -73,9 +75,15 @@ classdef MID_RPR4000 < handle
         end
         function [answer] = sendMessage( inst, message)
             try
+                pause(0.1); %RPR4000がUpdateモードの場合、1秒に20コマンド以上は送れない。最低0.05秒待たなければならない。余裕をもって0.1秒待つ。
+                %シリアルの受信バッファをクリア
                 flush( inst.serialObj );
                 inst.waitForSend();
-                pause(0.1); %RPR4000がUpdateモードの場合、1秒に20コマンド以上は送れない。最低0.05秒待たなければならない。余裕をもって0.1秒待つ。
+                
+                %コマンド送信前にバッファ内のデータがあれば読み捨てる．
+                while(inst.serialObj.NumBytesAvailable > 0)
+                    readline( inst.serialObj ); %バッファ内のデータがあれば読み捨てる．
+                end
                 writeline( inst.serialObj, message );
                 answer = readline( inst.serialObj ); % 全てのコマンドに対してcall backが必ずある. queryならもちろんある．
                 pause(0.1); %バッファに残りがないかをチェックする前に少し待つ．
@@ -128,6 +136,7 @@ classdef MID_RPR4000 < handle
             % freqは０に設定することがある．この場合は無条件にOK
             tf = freq == 0 || freq*inst.maxDutyRatio > cycle*repRate;
         end
+
         function setFrequency(inst, freq)
             if(freq < 0 || freq > 21999999)
                 error('frequency exceed');
@@ -179,7 +188,6 @@ classdef MID_RPR4000 < handle
         function [cycle] = queryCycle( inst )
             cycle = inst.callCycle('CY:?');
         end
-
         function cycle = callCycle(inst, message)
             numPattern = digitsPattern(4);
             preamblePattern = "CY:";
@@ -200,7 +208,6 @@ classdef MID_RPR4000 < handle
         function [control] = queryControl( inst )
             control = inst.callControl('CO:?');
         end
-
         function control = callControl(inst, message)
             numPattern = digitsPattern(3);
             preamblePattern = "CO:";
@@ -234,7 +241,6 @@ classdef MID_RPR4000 < handle
         function [repRate] = queryRepRate( inst )
             repRate = inst.callRepRate('RR:?');
         end
-
         function repRate = callRepRate(inst, message)
             numPattern = digitsPattern(5) + "." + digitsPattern(3);
             preamblePattern = "RR:";
@@ -242,9 +248,36 @@ classdef MID_RPR4000 < handle
             echoStr = inst.generalCall(message, echoPattern);
             repRate = str2double(extract(extractAfter(echoStr,preamblePattern),numPattern));
         end
+        
+        function setTrigger(inst, trigger)
+            switch(trigger)
+                case {'I', 'INT'}
+                    sendChar = 'I';
+                case {'E', 'EXT'}
+                    sendChar = 'E';
+                case {'C', 'XPC'}
+                    sendChar = 'C';
+                otherwise
+                    error('Illeagal trigger source name');
+            end
+            callBackChar = inst.callTrigger(['TG:', sendChar]);
+            if(sendChar ~= callBackChar)
+                warning('setTrigger: The desired trigger could not be set.')
+            end
+        end
+        function [trigger] = queryTrigger( inst )
+            trigger = inst.callTrigger('TG:?');
+        end
+        function trigger = callTrigger(inst, message)
+            valPattern = lettersPattern(3);
+            preamblePattern = "TG:";
+            echoPattern =  preamblePattern + valPattern;
+            echoStr = inst.generalCall(message, echoPattern);
+            trigger = str2double(extract(extractAfter(echoStr,preamblePattern),valPattern));
+        end
 
-        function delete(stp)
-            delete(stp.serialObj);
+        function delete(inst)
+            delete(inst.serialObj);
             fprintf('RPR4000 pulser/reciever was successifully closed\n');
         end
     end
