@@ -1,5 +1,5 @@
 classdef MID_RPR4000 < handle
-    %RPR4000 Ritec高出力パルサーレシーバーの制御クラス
+    %Class for RITEC RPR-4000 High-power Pulser-Receiver
     %   Sample program 
     %  %demo_RPR4000.m
     % clear rpr
@@ -15,6 +15,9 @@ classdef MID_RPR4000 < handle
     % control = rpr.queryControl()
     % repRate = rpr.queryRepRate()
     % clear rpr
+    %
+    % History:
+    % 2023/10/16 Support for serialport (as serial is scheduled to be removed)
 
     
     properties
@@ -27,6 +30,7 @@ classdef MID_RPR4000 < handle
             0.8 0.5 0.4 0.25 0.2 0.16 0.125 0.1 0.8];
         retries = 3;
         maxDutyRatio = 0.001;
+        version = 1.0;
     end
     
     methods
@@ -68,32 +72,22 @@ classdef MID_RPR4000 < handle
             end
         end
         function [answer] = sendMessage( inst, message)
-            count = 0;
-            %fprintf('sendMessage: try to send %s\n', message);
-            while(true)
-                try
-                    flush( inst.serialObj );
-                    inst.waitForSend();
-                    pause(0.1); %RPR4000がUpdateモードの場合、1秒に20コマンド以上は送れない。最低0.05秒待たなければならない。余裕をもって0.1秒待つ。
-                    writeline( inst.serialObj, message );
-                    answer = readline( inst.serialObj ); % 全てのコマンドに対してcall backが必ずある. queryならもちろんある．
+            try
+                flush( inst.serialObj );
+                inst.waitForSend();
+                pause(0.1); %RPR4000がUpdateモードの場合、1秒に20コマンド以上は送れない。最低0.05秒待たなければならない。余裕をもって0.1秒待つ。
+                writeline( inst.serialObj, message );
+                answer = readline( inst.serialObj ); % 全てのコマンドに対してcall backが必ずある. queryならもちろんある．
+                pause(0.1); %バッファに残りがないかをチェックする前に少し待つ．
+                while(inst.serialObj.NumBytesAvailable > 0)
+                    answer = join([answer, readline( inst.serialObj )]);
                     pause(0.1); %バッファに残りがないかをチェックする前に少し待つ．
-                    while(inst.serialObj.NumBytesAvailable > 0)
-                        answer = join([answer, readline( inst.serialObj )]);
-                        pause(0.1); %バッファに残りがないかをチェックする前に少し待つ．
-                    end
-                    break;
-                catch exception
-                    % エラーが起きた場合、10回施行して、それでもだめならあきらめる
-                    fprintf('MID_RPR4000:sendMessage Error detected retry. count %d\n', count );
-                    fprintf('pinstatus:\n')
-                    getpinstatus(inst.serialObj)
-                    count = count + 1;
-                    pause(0.1);
-                    if(count >= 10)
-                        rethrow(exception)
-                    end
                 end
+            catch exception
+                fprintf('MID_RPR4000:sendMessage Error detected retry. count %d\n', count );
+                fprintf('pinstatus:\n')
+                getpinstatus(inst.serialObj)
+                rethrow(exception)
             end
             if( inst.flgDebug ) 
                 fprintf('sendMessage():sent \"%s\"\n', message );
