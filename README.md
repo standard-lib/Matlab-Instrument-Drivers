@@ -6,27 +6,34 @@ More instruments will be added as the number of devices in our laboratory increa
 
 # Compatible Instrument List
 
-## Oscilloscope `MID-Infiniium`
+## Oscilloscope `MID_Infiniium`
 
-* Keysight Infiniium oscilloscopes `MID-Infiniium class`
-	* Infiniium oscilloscopes that have the 5.00 or greater user interface software
-		* S-Series oscilloscopes
-		* V-Series oscilloscopes
-		* Z-Series oscilloscopes
-		* 9000 Series oscilloscopes
-		* 9000H Series oscilloscopes
-		* 90000A Series oscilloscopes
-		* 90000 Q Series oscilloscopes
-		* 90000 X Series oscilloscopes
-	* Infiniium oscilloscopes that have the 11.00 or greater user interface software
-		* MXR-Series oscilloscopes
-		* EXR-Series oscilloscopes (The author tested in this oscilloscope)
+* Infiniium oscilloscopes that have the 5.00 or greater user interface software
+    * S-Series oscilloscopes
+    * V-Series oscilloscopes
+    * Z-Series oscilloscopes
+    * 9000 Series oscilloscopes
+    * 9000H Series oscilloscopes
+    * 90000A Series oscilloscopes
+    * 90000 Q Series oscilloscopes
+    * 90000 X Series oscilloscopes
+* Infiniium oscilloscopes that have the 11.00 or greater user interface software
+    * MXR-Series oscilloscopes
+    * EXR-Series oscilloscopes (The author tested in this oscilloscope)
 
-## Stepping motor controller `MID-CV87x`
+## Melec Stepping motor controller `MID_CV87x`
 
 * Melec stepping motor controller C-V870 series
 	* Note: the motor controllers are used in the the scanner of Insight K.K. for ultrasonic C-scan.
 
+## Keysight waveform generator `33500/33600 Series`
+
+* 33500 Series
+* 33600 Series
+
+## RITEC Pulser-Receiver `RPR-4000`
+
+* RITEC RPR-4000
 
 # Features
 
@@ -36,8 +43,9 @@ The goal is to minimize the code written by the user by providing only the neces
 # Demo
 
 ## Oscilloscope `MID-Infiniium`
+See demo_oscilloscope.m
 
-You can get waveforms from your oscilloscope by:
+You can get waveforms displayed on your oscilloscope by:
 ```Matlab: Read waveforms from oscilloscope
 devlist = visadevlist                          % Get available device list.
 dev = devlist(1,:);                            % If the oscilloscope's index is 1 in the list. 

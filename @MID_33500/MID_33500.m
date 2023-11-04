@@ -13,12 +13,12 @@ classdef MID_33500 < handle
         % コンストラクタ
 		% 引数でVISAアドレスを指定する．
         % また，buffersizeオプションで出力バッファサイズ，
-        % timeoutオプションでタイムアウト時間を指定する。指定しない場合、それぞれ100万B，10秒になる。
+        % timeoutオプションでタイムアウト時間を指定する。指定しない場合、それぞれ400MB，10秒になる。
         function obj = MID_33500(visaaddr, NameValueArgs)
             arguments
                 visaaddr char
-                NameValueArgs.buffersize double = 1e6
-                NameValueArgs.timeout double = 10
+                NameValueArgs.buffersize double {mustBeInteger,mustBePositive} = 400e6
+                NameValueArgs.timeout {mustBeInteger} = 10
                 NameValueArgs.debugmode logical = false
             end
             visaaddr = convertStringsToChars(visaaddr);
@@ -40,25 +40,35 @@ classdef MID_33500 < handle
 %%  メソッド（波形送信）
         
         function setArbWaveform(obj, channel, waveform, srate)
-            fgen = obj.vObj;
+            arguments
+                obj 
+                channel {mustBeMember(channel,{1,2})}
+                waveform (1,:) {mustBeNumeric,mustBeReal}
+                srate (1,1) {mustBeNumeric,mustBeReal}
+            end
             specify_volt = max(abs(waveform));
             normalized_waveform = waveform / specify_volt;
+            writeline(obj.vObj,sprintf('SOURce%d:DATA:VOLatile:CLEar', channel));
+            % Set instrument's byte order to swap endian format (little
+            % endian format)
+            fprintf(obj.vObj, 'FORM:BORD SWAP'); % swap the endian format
+            % Convert waveform data (float) to byte array (uint8). 
+            % assume that system is little endian.
+            uint8Waveform = typecast(single(normalized_waveform),'uint8');
+            % make IEEE header (ex. '#520004')
+            sizeStr = num2str(numel(uint8Waveform));
+            lenSizeStr = num2str(numel(sizeStr));
+            headerString = sprintf('SOUR%d:DATA:ARB auto%d,#%s%s', channel, channel, lenSizeStr, sizeStr);
+            uint8Header = uint8(char(headerString));
+            % Send header and data
+            write(obj.vObj,[uint8Header uint8Waveform], "uint8");
             obj.assertError();
-        	writeline(fgen,sprintf('SOURce%d:DATA:VOLatile:CLEar', channel));
-            sizeStr = num2str(numel(waveform));
-            sizeSizeStr = num2str(numel(sizeStr));
-            headerString = sprintf(['SOUR%d:DATA:ARB auto%d,#', sizeSizeStr, sizeStr], channel, channel);
-            write(fgen,headerString, "char");
-            writebinblock(fgen,normalized_waveform,"single");
-%             arbstring = sprintf('SOUR%d:DATA:ARB auto%d %s', channel, channel,  num2str(normalized_waveform,',%.5f'));
-% 	        writeline(fgen,arbstring);
-            obj.assertError();
-            writeline(fgen,'*WAI');
-            writeline(fgen,sprintf('SOUR%d:FUNCtion:ARBitrary auto%d', channel, channel)); % set current arb waveform to defined arb pulse
-            writeline(fgen,sprintf('SOUR%d:FUNCtion ARB', channel)); % turn on arb function
-            writeline(fgen,sprintf('SOUR%d:VOLT %e', channel, specify_volt)); % set max waveform amplitude
-            writeline(fgen,sprintf('SOUR%d:VOLT:OFFSET 0', channel)); % set offset to 0 V            
-            writeline(fgen,sprintf('SOUR%d:FUNC:ARB:SRAT %e', channel, srate)); % set sample rate
+            writeline(obj.vObj,'*WAI');
+            writeline(obj.vObj,sprintf('SOUR%d:FUNCtion:ARBitrary auto%d', channel, channel)); % set current arb waveform to defined arb pulse
+            writeline(obj.vObj,sprintf('SOUR%d:FUNCtion ARB', channel)); % turn on arb function
+            writeline(obj.vObj,sprintf('SOUR%d:VOLT %e', channel, specify_volt)); % set max waveform amplitude
+            writeline(obj.vObj,sprintf('SOUR%d:VOLT:OFFSET 0', channel)); % set offset to 0 V            
+            writeline(obj.vObj,sprintf('SOUR%d:FUNC:ARB:SRAT %e', channel, srate)); % set sample rate
             obj.assertError();
         end
         
@@ -78,7 +88,9 @@ classdef MID_33500 < handle
             if ~exist
                fprintf ('Arbitrary waveform generated without any error \n')
             else
-               error (['Error reported: ', char(errorStr)])
+               fprintf(['delete:', char(errorStr)])
+               obj.clearError();
+               error('assert failed')
             end
         end
         function clearError(obj)
