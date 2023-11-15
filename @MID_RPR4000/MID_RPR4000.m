@@ -32,7 +32,7 @@ classdef MID_RPR4000 < handle
             0.8 0.5 0.4 0.25 0.2 0.16 0.125 0.1 0.8];
         retries = 3;
         maxDutyRatio = 0.001;
-        version = 1.1;
+        version = 1.2;
     end
     
     methods
@@ -262,18 +262,18 @@ classdef MID_RPR4000 < handle
             end
             callBackChar = inst.callTrigger(['TG:', sendChar]);
             if(sendChar ~= callBackChar)
-                warning('setTrigger: The desired trigger could not be set.')
+                warning('setTrigger: The desired trigger could not be set. send:%c, callback:%c', sendChar, callBackChar);
             end
         end
         function [trigger] = queryTrigger( inst )
             trigger = inst.callTrigger('TG:?');
         end
         function trigger = callTrigger(inst, message)
-            valPattern = lettersPattern(3);
+            valPattern = lettersPattern(1);
             preamblePattern = "TG:";
             echoPattern =  preamblePattern + valPattern;
             echoStr = inst.generalCall(message, echoPattern);
-            trigger = str2double(extract(extractAfter(echoStr,preamblePattern),valPattern));
+            trigger = extract(extractAfter(echoStr,preamblePattern),valPattern);
         end
 
         function delete(inst)
