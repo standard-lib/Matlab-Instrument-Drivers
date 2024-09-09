@@ -2,7 +2,7 @@
 classdef MID_33500 < handle
     
 	properties (SetAccess = public)
-        version = 1.1;
+        version = 1.2;
 		vObj;   % visadevオブジェクト
         deviceModel
         flgDebug
@@ -71,7 +71,44 @@ classdef MID_33500 < handle
             writeline(obj.vObj,sprintf('SOUR%d:FUNC:ARB:SRAT %e', channel, srate)); % set sample rate
             obj.assertError();
         end
-        
+
+        function setArbWaveform2(obj, waveform1, waveform2, srate)
+            arguments
+                obj 
+                waveform1 (1,:) {mustBeNumeric,mustBeReal}
+                waveform2 (1,:) {mustBeNumeric,mustBeReal}
+                srate (1,1) {mustBeNumeric,mustBeReal}
+            end
+            specify_volt = max(abs([waveform1,waveform2]));
+            normalized_waveform1 = waveform1 / specify_volt;
+            normalized_waveform2 = waveform2 / specify_volt;
+            normalized_waveform = [normalized_waveform1, normalized_waveform2];
+            writeline(obj.vObj,sprintf('DATA:VOLatile:CLEar'));
+            % Set instrument's byte order to swap endian format (little
+            % endian format)
+            fprintf(obj.vObj, 'FORM:BORD SWAP'); % swap the endian format
+            fprintf(obj.vObj, 'DATA:ARB2:FORM AABB'); % send in AABB format
+            % Convert waveform data (float) to byte array (uint8). 
+            % assume that system is little endian.
+            uint8Waveform = typecast(single(normalized_waveform),'uint8');
+            % make IEEE header (ex. '#520004')
+            sizeStr = num2str(numel(uint8Waveform));
+            lenSizeStr = num2str(numel(sizeStr));
+            headerString = sprintf('DATA:ARB2 myArb,#%s%s', lenSizeStr, sizeStr);
+            uint8Header = uint8(char(headerString));
+            % Send header and data
+            write(obj.vObj,[uint8Header uint8Waveform], "uint8");
+            obj.assertError();
+            writeline(obj.vObj,'*WAI');
+            writeline(obj.vObj,sprintf('FUNC:ARB myArb')); % set current arb waveform to defined arb pulse
+            writeline(obj.vObj,sprintf('FUNCtion ARB')); % turn on arb function
+            writeline(obj.vObj,sprintf('VOLT %e', specify_volt)); % set max waveform amplitude
+            writeline(obj.vObj,sprintf('VOLT:OFFSET 0')); % set offset to 0 V            
+            writeline(obj.vObj,sprintf('FUNC:ARB:SRAT %e', srate)); % set sample rate
+            obj.assertError();
+        end
+
+
         %%  メソッド（動作関係）
                 
         function outputOn(obj, channel)

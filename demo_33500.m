@@ -15,8 +15,9 @@ plot(timevec, waveform1, timevec, waveform2+2)
 
 fgen.outputOff(1);
 fgen.outputOff(2);
-fgen.setArbWaveform(1, waveform1, srate);
-fgen.setArbWaveform(2, waveform2, srate);
+% fgen.setArbWaveform(1, waveform1, srate);
+% fgen.setArbWaveform(2, waveform2, srate);
+fgen.setArbWaveform2(waveform1,waveform2, srate);
 fgen.outputOn(1);
 fgen.outputOn(2);
 
