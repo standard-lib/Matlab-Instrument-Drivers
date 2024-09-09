@@ -45,8 +45,11 @@ classdef MID_OptoSigma < handle
             portList = MID_OptoSigma.GetSerialPortByName(portname);
             if(numel(portList)==0)
                 portname = input('Input port number (ex.''COM13''):');
+            elseif(numel(portList)==1)
+                portname = portList{1};
             else
-                portname = portList{1};% 同じものが二つ以上のアダプタでマッチしてしまったら，最初に見つかったものを選ぶ．
+                % 同じものが二つ以上のアダプタでマッチしてしまったら，エラーを出す
+                error('MID_OptoSigma::Multiple port number candidates exist.');
             end
             
             inst.controllerName = NameValueArgs.controllerName;
@@ -73,6 +76,7 @@ classdef MID_OptoSigma < handle
                 inst.serialObj = serialport(portname, baudrate_candidates(idx), 'Parity', 'none', 'DataBits', 8, 'StopBits', 1, 'FlowControl', 'hardware');
                 configureTerminator(inst.serialObj, "CR/LF");
                 inst.clearBuffer();
+                % バージョン問い合わせコマンドを送り，V**.**の返答が来たら正しいbaudrateとする．
                 writeline( inst.serialObj, "?:V" );
                 versionstr = read(inst.serialObj, 5, "char");
                 pat = "V" + digitsPattern() + "." + digitsPattern();
