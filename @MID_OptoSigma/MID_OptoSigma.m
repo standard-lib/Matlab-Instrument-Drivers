@@ -7,10 +7,10 @@ classdef MID_OptoSigma < handle
         serialObj;
         flgDebug;
         controllerName;
-        maxAxes;
-        mmperfullpulse = [4e-4, 4e-4]; %unit mm 製品の
-        divides;
-        axes;
+        maxAxes;  %コントローラが扱える最大軸数
+        mmperfullpulse; %unit mm 製品のピッチによって異なる
+        divides; % 分割数．ベクトルで軸ごとに設定
+        axes;    %使用する軸の数 (axes<=maxAxes)
         baudrate;
         e_max_pps = 500000;  % electrical maximum velocity (pulse/s)
         e_maxR_ms = 1000;   % electrical maximum of rising time (ms)
@@ -150,9 +150,10 @@ classdef MID_OptoSigma < handle
                         case 'hps60-20x-m5'
                             inst.mmperfullpulse(idxStage) = 2e-3;
                         otherwise
-                            warining(...
+                            warning(...
                                 "Stage '%s' is not supported. The pitch of the axes is assume to 1um/pulse.\n" + ...
                                 "Specify the pitch by using option 'mmperpulse', or specify stage supported by this program.", NameValueArgs.stageNames(idxStage));
+                            inst.mmperfullpulse(idxStage) = 1e-3;
                     end
                 end
             end
@@ -323,10 +324,10 @@ classdef MID_OptoSigma < handle
             %   name: 検索したいポートのPnP Entity nameか，デバイスインスタンスパスを与える。PnP Entitiy nameには正規表現が使える。
             %   portList: 検索に引っかかったポート番号をn行1列のセル配列に入れて返す。
             arguments (Input)
-                name char
+                name (1,1) string
             end
             arguments(Output)
-                portList char
+                portList (1,1) string
             end
             try
                 NET.addAssembly('System.Management');

@@ -32,7 +32,7 @@ classdef MID_RPR4000 < handle
             0.8 0.5 0.4 0.25 0.2 0.16 0.125 0.1 0.8];
         retries = 3;
         maxDutyRatio = 0.001;
-        version = 1.2;
+        version = 1.3;
     end
     
     methods
@@ -298,10 +298,10 @@ classdef MID_RPR4000 < handle
             %   name: 検索したいポートのPnP Entity nameか，デバイスインスタンスパスを与える。PnP Entitiy nameには正規表現が使える。
             %   portList: 検索に引っかかったポート番号をn行1列のセル配列に入れて返す。
             arguments (Input)
-                name char
+                name (1,1) string
             end
             arguments(Output)
-                portList char
+                portList (1,1) string
             end
             try
                 NET.addAssembly('System.Management');
