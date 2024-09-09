@@ -282,12 +282,27 @@ classdef MID_RPR4000 < handle
         end
     end
     methods(Static)
-        function [ portList ] = GetSerialPortByName( PnPEntityName )
-            %getSerialPortByName PnP Entity name
-            %PnP Entity Name(デバイスマネージャでみられる名前）と一致するポート番号(COM1~COM256)のリストを返す。
+        function [ portList ] = GetSerialPortByName( name )
+            %getSerialPortByName
+            % PnP Entity Name(デバイスマネージャでみられる名前）あるいはデバイス
+            % インスタンスパスと一致するポート番号(COM1~COM256)のリストを返す。
+            %   PnP Entity Nameはデバイスマネージャでリストにされる名前
+            %    ex. Prolific USB-to-Serical Comm Port (COM7)
+            %   *+与えられた名前+*+(COM*)の形になっているものをチェックする．
+            %   デバイスインスタンスパスはデバイスマネージャでプロパティを開いたあと，
+            %   詳細タブのプロパティ(P)の「デバイスインスタンスパス」で得られる値．
+            %   ちゃんと確認していないが，多分その部品ごとに固有
+            %    ex. USB\VID_067B&PID_2303\5&2ED43146&0&3
+            %
             %   .NETの機能を使う上、Windowに強く依存した場所を読みに行くので、Windowsじゃないとほとんど動く見込みなし。
-            %   PnPEntityName: 検索したいポートが持っているPnP Entity nameを与える。正規表現が使える。
+            %   name: 検索したいポートのPnP Entity nameか，デバイスインスタンスパスを与える。PnP Entitiy nameには正規表現が使える。
             %   portList: 検索に引っかかったポート番号をn行1列のセル配列に入れて返す。
+            arguments (Input)
+                name char
+            end
+            arguments(Output)
+                portList char
+            end
             try
                 NET.addAssembly('System.Management');
                 manageClass = System.Management.ManagementClass('Win32_PnpEntity');
@@ -299,10 +314,12 @@ classdef MID_RPR4000 < handle
                 for i=1:manageObjectCollection.Count+1
                     manageObjectCollectionIterator.MoveNext();
                     manageObject = manageObjectCollectionIterator.Current;
-                    name = char(manageObject.GetPropertyValue('Name'));
-                    if(~isempty( regexp( name,'\(COM[1-9][0-9]?[0-9]?\)','ONCE') ) && ...
-                       ~isempty( regexp( name, PnPEntityName, 'ONCE')) )
-                        matchStr = regexp( name, '\(COM[1-9][0-9]?[0-9]?\)', 'match');
+                    pnpentityname = char(manageObject.GetPropertyValue('Name'));
+                    pnpdeviceid = char(manageObject.GetPropertyValue('PNPDeviceID'));
+                    if(~isempty( regexp( pnpentityname,'\(COM[1-9][0-9]?[0-9]?\)','ONCE') ) && ...
+                       ~isempty( regexp( pnpentityname, name, 'ONCE')) || ...
+                       contains( pnpdeviceid, name,"IgnoreCase",true ))
+                        matchStr = regexp( pnpentityname, '\(COM[1-9][0-9]?[0-9]?\)', 'match');
                         comName = matchStr{1,1};
                         comName = comName(2:numel(comName)-1);
                         portList{cnter, 1 } = comName;
