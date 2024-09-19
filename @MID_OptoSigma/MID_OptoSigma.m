@@ -14,7 +14,6 @@ classdef MID_OptoSigma < handle
         baudrate;
         e_max_pps;       % electrical maximum velocity. The value is determined by controller (pulse/s)
         e_maxR_ms;       % electrical maximum of rising time (ms)
-
         m_strt_mmps = 0.4;  % starting velocity (mm/s)
         m_max_mmps2 = 180; % maximum acceleration (mm/s^2)
         m_max_mmps;        % maximum velocity (mm/s); Depends on stage part number
