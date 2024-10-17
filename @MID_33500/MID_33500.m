@@ -2,7 +2,7 @@
 classdef MID_33500 < handle
     
 	properties (SetAccess = public)
-        version = 1.2;
+        version = 1.3;
 		vObj;   % visadevオブジェクト
         deviceModel
         flgDebug
@@ -72,14 +72,19 @@ classdef MID_33500 < handle
             obj.assertError();
         end
 
-        function setArbWaveform2(obj, waveform1, waveform2, srate)
+        function [waveObj] = setArbWaveform2(obj, waveform1, waveform2, srate, waveformName)
             arguments
                 obj 
                 waveform1 (1,:) {mustBeNumeric,mustBeReal}
                 waveform2 (1,:) {mustBeNumeric,mustBeReal}
                 srate (1,1) {mustBeNumeric,mustBeReal}
+                waveformName string = "myArb";
             end
+            assert(strlength(waveformName)<=12);
             specify_volt = max(abs([waveform1,waveform2]));
+            waveObj.name = waveformName;
+            waveObj.volt = specify_volt;
+            waveObj.srate = srate;
             normalized_waveform1 = waveform1 / specify_volt;
             normalized_waveform2 = waveform2 / specify_volt;
             normalized_waveform = [normalized_waveform1, normalized_waveform2];
@@ -94,17 +99,21 @@ classdef MID_33500 < handle
             % make IEEE header (ex. '#520004')
             sizeStr = num2str(numel(uint8Waveform));
             lenSizeStr = num2str(numel(sizeStr));
-            headerString = sprintf('DATA:ARB2 myArb,#%s%s', lenSizeStr, sizeStr);
+            headerString = sprintf('DATA:ARB2 %s,#%s%s',waveformName, lenSizeStr, sizeStr);
             uint8Header = uint8(char(headerString));
             % Send header and data
             write(obj.vObj,[uint8Header uint8Waveform], "uint8");
             obj.assertError();
+            obj.switchArbWavefrom2(waveObj);
+        end
+        
+        function switchArbWavefrom2(obj, waveObj)
             writeline(obj.vObj,'*WAI');
-            writeline(obj.vObj,sprintf('FUNC:ARB myArb')); % set current arb waveform to defined arb pulse
+            writeline(obj.vObj,sprintf('FUNC:ARB %s', waveObj.name)); % set current arb waveform to defined arb pulse
             writeline(obj.vObj,sprintf('FUNCtion ARB')); % turn on arb function
-            writeline(obj.vObj,sprintf('VOLT %e', specify_volt)); % set max waveform amplitude
+            writeline(obj.vObj,sprintf('VOLT %e', waveObj.volt)); % set max waveform amplitude
             writeline(obj.vObj,sprintf('VOLT:OFFSET 0')); % set offset to 0 V            
-            writeline(obj.vObj,sprintf('FUNC:ARB:SRAT %e', srate)); % set sample rate
+            writeline(obj.vObj,sprintf('FUNC:ARB:SRAT %e', waveObj.srate)); % set sample rate
             obj.assertError();
         end
 

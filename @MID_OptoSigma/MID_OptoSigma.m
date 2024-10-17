@@ -11,7 +11,6 @@ classdef MID_OptoSigma < handle
         mmperfullpulse;  % Stage travel per pulse (full pulse) when division is assumed to be 1. unit mm. Depends on stage part number.
         divides;         % Steps per fullpulse
         axes;            % Number of axes used (axes<=maxAxes)
-        baudrate;
         e_max_pps;       % electrical maximum velocity. The value is determined by controller (pulse/s)
         e_maxR_ms;       % electrical maximum of rising time (ms)
         m_strt_mmps = 0.4;  % starting velocity (mm/s)
