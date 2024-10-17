@@ -42,7 +42,7 @@ classdef MID_33500 < handle
         function setArbWaveform(obj, channel, waveform, srate)
             arguments
                 obj 
-                channel {mustBeMember(channel,{1,2})}
+                channel {mustBeMember(channel,[1,2])}
                 waveform (1,:) {mustBeNumeric,mustBeReal}
                 srate (1,1) {mustBeNumeric,mustBeReal}
             end
