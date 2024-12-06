@@ -16,7 +16,7 @@ classdef MID_OptoSigma < handle
         m_strt_mmps = 0.4;  % starting velocity (mm/s)
         m_max_mmps2 = 180; % maximum acceleration (mm/s^2)
         m_max_mmps;        % maximum velocity (mm/s); Depends on stage part number
-        version = 0.2;
+        version = 0.3;
 
     end
     
@@ -44,13 +44,13 @@ classdef MID_OptoSigma < handle
             inst.flgDebug = NameValueArgs.debugmode;
             
             while(1)
-                if(numel(portname) == 1 && matches(portname,"COM"+digitsPattern()))
+                if(isscalar(portname) && matches(portname,"COM"+digitsPattern()))
                     decidedPortName = portname{1};
                     break;
                 end
-                if(numel(portname) == 1)
+                if(isscalar(portname))
                     portname = MID_OptoSigma.GetSerialPortByName(portname);
-                    if(numel(portname) == 1)
+                    if(isscalar(portname))
                         continue;
                     end
                 elseif(numel(portList)==0)
@@ -230,7 +230,7 @@ classdef MID_OptoSigma < handle
                     case 'pulse'
                         pulse = val;
                 end
-                specifiedPulse(idx) = pulse;
+                specifiedPulse(idx) = int32(round(pulse));
             end
             % speed setting
             for idx = 1:numel(axes)
@@ -251,15 +251,15 @@ classdef MID_OptoSigma < handle
                 [sign1, absPulse1] = inst.toSignAndAbsPulse(specifiedPulse(idx1));
                 [sign2, absPulse2] = inst.toSignAndAbsPulse(specifiedPulse(idx2));
                 inst.waitForSend();
-                inst.sendMessage(sprintf('A:W%cP%d%cP%d', sign1, absPulse1, sign2, absPulse2));
-                inst.sendMessage(sprintf('G:'));
+                assert("OK" == inst.sendMessage(sprintf('A:W%cP%d%cP%d', sign1, absPulse1, sign2, absPulse2)))
+                assert("OK" == inst.sendMessage(sprintf('G:')));
             else
                 for idx = 1:numel(axes)
                     axis = axes(idx);
                     [sign, absPulse] = inst.toSignAndAbsPulse(specifiedPulse(idx));
                     inst.waitForSend();
-                    inst.sendMessage(sprintf('A:%d%cP%d', axis, sign, absPulse));
-                    inst.sendMessage(sprintf('G:'));
+                    assert("OK" == inst.sendMessage(sprintf('A:%d%cP%d', axis, sign, absPulse)));
+                    assert("OK" == inst.sendMessage(sprintf('G:')));
                 end
             end
             %軸が止まるまで停止
@@ -315,10 +315,10 @@ classdef MID_OptoSigma < handle
         function [sign,absPulse] = toSignAndAbsPulse(inst, pulse)
             if( pulse >= 0 )
                 sign = '+';
-                absPulse = pulse;
+                absPulse = int32(round(pulse));
             else
                 sign = '-';
-                absPulse = -pulse;
+                absPulse = int32(round(-pulse));
             end
         end
         function mm = pulse2mm(inst, axis, pulse)
