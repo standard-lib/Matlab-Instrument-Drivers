@@ -16,7 +16,7 @@ classdef MID_OptoSigma < handle
         m_strt_mmps = 0.4;  % starting velocity (mm/s)
         m_max_mmps2 = 180; % maximum acceleration (mm/s^2)
         m_max_mmps;        % maximum velocity (mm/s); Depends on stage part number
-        version = 0.3;
+        version = 0.4;
 
     end
     
@@ -207,7 +207,7 @@ classdef MID_OptoSigma < handle
             fprintf('OptoSigma stage %s was successifully closed\n', inst.controllerName);
         end
 
-        function driveAbs(inst, axes, vals, NameValueArgs)
+        function [curr_pos] = driveAbs(inst, axes, vals, NameValueArgs)
             % 指定の軸（複数指定可能）を指定の値に動かす．
             % 移動が終わるまで，ブロッキングする関数
             arguments(Input)
@@ -226,9 +226,25 @@ classdef MID_OptoSigma < handle
                 val = vals(idx);
                 switch(lower(NameValueArgs.unit))
                     case 'mm'
-                        pulse = inst.mm2pulse(axis, val);
+                        pulse_float = inst.mm2pulse(axis, val);
+                        pulse = int32(round(pulse_float));
+                        if(abs(pulse_float-pulse) >= 0.001)
+                            warning("Cannot move to the specified position " + ...
+                                "%f mm. Movement per pulse on axis %d is %f mm. Moves to a neighbouring point %f mm).", ...
+                                val, ...
+                                axis, ...
+                                inst.pulse2mm(axis,1), ...
+                                inst.pulse2mm(axis,pulse));
+                        end
                     case 'pulse'
-                        pulse = val;
+                        pulse_float = val;
+                        pulse = int32(round(pulse_float));
+                        if(abs(pulse_float-pulse)>0.0001)
+                            error("Pulse should be specified in integer. " + ...
+                                "%f pulse is specified on axis %d.", ...
+                                pulse_float, ...
+                                axis);
+                        end
                 end
                 specifiedPulse(idx) = int32(round(pulse));
             end
@@ -266,14 +282,21 @@ classdef MID_OptoSigma < handle
             inst.waitForSend();
 
             posInPulse = inst.queryAllPosition();
+            curr_pos = zeros(1,numel(axes));
             for idx = 1:numel(axes)
                 axis = axes(idx);
                 inst.setSpeed(axis, prevSpeed(:,idx));
                 if(posInPulse(axis) ~= specifiedPulse(idx))
-                    warning("Axis %d has not moved to the specified position\n(%dpulse(%fmm)/now %dpulse(%fmm)).", ...
+                    error("Axis %d has not moved to the specified position\n(specified %dpulse(%fmm)/now %dpulse(%fmm)).", ...
                         axis, ...
                         specifiedPulse(idx), inst.pulse2mm(axis,specifiedPulse(idx)), ...
                         posInPulse(axis), inst.pulse2mm(axis,posInPulse(axis)) );
+                end
+                switch(lower(NameValueArgs.unit))
+                    case 'mm'
+                        curr_pos(idx) = inst.pulse2mm(posInPulse(axis));
+                    case 'pulse'
+                        curr_pos(idx) = posInPulse(axis);
                 end
             end
         end
@@ -350,7 +373,7 @@ classdef MID_OptoSigma < handle
                 inst  (1,1) MID_OptoSigma
             end
             arguments(Output)
-                posInPulse (1,:) double {mustBeInteger}
+                posInPulse (1,:) int32 {mustBeInteger}
             end
             % QコマンドはBusy状態でも発行できる
             posStr = inst.sendMessage("Q:");
@@ -376,7 +399,7 @@ classdef MID_OptoSigma < handle
             sign = matches(numStr, "-"+asManyOfPattern(" ")+digitsPattern()+",");
             sign = sign*-2+1;
             val = str2double(extract(numStr, digitsPattern()));
-            posInPulse = (sign.*val).';
+            posInPulse = int32((sign.*val).');
         end
         function spd = setSpeed(inst, axis, spd_toset)
             arguments
